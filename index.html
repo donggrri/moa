@@ -8,7 +8,11 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <div class="app-shell">
+    <div class="auth-gate" id="authGate" hidden>
+      <div class="auth-card" id="authContent"></div>
+    </div>
+
+    <div class="app-shell is-hidden" id="appShell">
       <aside class="sidebar" id="sidebar">
         <div class="brand-block">
           <div class="brand-mark">M</div>
@@ -68,7 +72,7 @@
             <strong id="currentUserName">서연</strong>
             <span>나</span>
           </div>
-          <button class="icon-button ghost" data-action="open-reset-modal" type="button" title="데모 데이터 초기화" aria-label="데모 데이터 초기화">
+          <button class="icon-button ghost" data-action="logout" type="button" title="로그아웃" aria-label="로그아웃">
             <span data-icon="settings"></span>
           </button>
         </div>
@@ -104,6 +108,10 @@
     <div id="modalRoot"></div>
     <div class="toast-region" id="toastRegion" aria-live="polite"></div>
 
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="supabase-config.js" defer></script>
+    <script src="supabase-client.js" defer></script>
+    <script src="data-store.js" defer></script>
     <script src="app.js" defer></script>
   </body>
 </html>

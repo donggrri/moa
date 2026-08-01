@@ -1,13 +1,24 @@
 (function () {
   'use strict';
 
-  var STORAGE_KEY = 'moa-shared-tasks-mvp-v1';
   var activeView = 'today';
   var taskFilter = 'all';
   var ideaFilter = 'all';
   var ideaQuery = '';
   var toastTimer;
-  var state = loadState();
+  var store = null;
+  var authClient = null;
+  var realtimeUnsubscribe = null;
+  var realtimeRefreshTimer = null;
+  var pendingInviteCode = getInviteFromUrl();
+  var authMode = 'signin';
+  var sessionBooting = false;
+  var state = {
+    currentSpaceId: null,
+    currentUserId: null,
+    currentUserProfile: null,
+    spaces: []
+  };
 
   var iconPaths = {
     sun: '<circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42"></path>',
@@ -81,6 +92,137 @@
       .replace(/>/g, '&gt;')
       .replace(/\"/g, '&quot;')
       .replace(/'/g, '&#039;');
+  }
+
+  function getInviteFromUrl() {
+    try {
+      var params = new URL(window.location.href).searchParams;
+      return params.get('invite') || params.get('code') || '';
+    } catch (error) {
+      return '';
+    }
+  }
+
+  function appUrl() {
+    return window.location.origin + window.location.pathname;
+  }
+
+  function clearInviteFromUrl() {
+    try {
+      var url = new URL(window.location.href);
+      url.searchParams.delete('invite');
+      url.searchParams.delete('code');
+      window.history.replaceState({}, document.title, url.pathname + (url.search ? url.search : '') + url.hash);
+    } catch (error) {
+      /* file:// 환경에서는 주소를 바꾸지 않습니다. */
+    }
+  }
+
+  function setAppVisible(visible) {
+    var appShell = document.getElementById('appShell');
+    var authGate = document.getElementById('authGate');
+    if (appShell) appShell.classList.toggle('is-hidden', !visible);
+    if (authGate) authGate.hidden = visible;
+  }
+
+  function configInstructions(reason) {
+    var example = 'window.MOA_SUPABASE_CONFIG = { url: \'https://YOUR_PROJECT_REF.supabase.co\', publishableKey: \'YOUR_PUBLIC_KEY\' };';
+    setAppVisible(false);
+    document.getElementById('authContent').innerHTML = [
+      '<div class="auth-brand"><span class="brand-mark">M</span><div><strong>모아</strong><span>함께 쓰는 생활 공간</span></div></div>',
+      '<div class="auth-icon">' + icon('settings', 22) + '</div>',
+      '<p class="auth-kicker">SETUP REQUIRED</p>',
+      '<h1 class="auth-title">Supabase 공개 설정이 필요해요.</h1>',
+      '<p class="auth-description">' + escapeHtml(reason || '앱을 시작하려면 Supabase 프로젝트의 브라우저 공개 설정을 등록해주세요.') + '</p>',
+      '<div class="setup-steps"><strong>연결 방법</strong><ol><li><code>supabase-config.example.js</code>를 복사해 같은 위치에 <code>supabase-config.js</code>를 만드세요.</li><li>Supabase의 Project URL과 Publishable/anon key를 입력하세요.</li><li>파일을 저장하고 이 페이지를 새로고침하세요.</li></ol></div>',
+      '<pre class="setup-code"><code>' + escapeHtml(example) + '</code></pre>',
+      '<p class="auth-footnote">브라우저에는 Publishable/anon key만 사용합니다. service_role 키는 절대 입력하지 마세요.</p>',
+      '<button class="button primary auth-submit" data-action="reload-page" type="button">설정 후 새로고침</button>'
+    ].join('');
+  }
+
+  function authModeMarkup(message) {
+    var isSignup = authMode === 'signup';
+    var isReset = authMode === 'reset';
+    var title = isSignup ? '모아 시작하기' : (isReset ? '비밀번호 재설정' : '다시 만나요');
+    var description = isSignup ? '이메일로 계정을 만들고 공동 공간을 시작해요.' : (isReset ? '가입한 이메일로 재설정 링크를 보내드려요.' : '공동 공간에 로그인하면 어디서든 이어서 사용할 수 있어요.');
+    var inviteNotice = pendingInviteCode ? '<div class="auth-invite-note">초대 링크로 들어왔어요. 로그인하면 공동 공간에 참여할 수 있어요.</div>' : '';
+    var nameField = isSignup ? '<label class="auth-field"><span>이름</span><input name="displayName" autocomplete="name" maxlength="40" placeholder="예: 서연" required /></label>' : '';
+    var passwordField = isReset ? '' : '<label class="auth-field"><span>비밀번호</span><input name="password" type="password" autocomplete="' + (isSignup ? 'new-password' : 'current-password') + '" minlength="6" placeholder="6자 이상" required /></label>';
+    var submit = isSignup ? '회원가입' : (isReset ? '재설정 링크 보내기' : '로그인');
+    return [
+      '<div class="auth-brand"><span class="brand-mark">M</span><div><strong>모아</strong><span>함께 쓰는 생활 공간</span></div></div>',
+      '<p class="auth-kicker">MOA SHARED SPACE</p>',
+      '<h1 class="auth-title">' + title + '</h1>',
+      '<p class="auth-description">' + description + '</p>',
+      inviteNotice,
+      message ? '<div class="auth-message">' + escapeHtml(message) + '</div>' : '',
+      '<form class="auth-form" id="authForm" data-auth-mode="' + authMode + '">',
+      nameField,
+      '<label class="auth-field"><span>이메일</span><input name="email" type="email" autocomplete="email" placeholder="you@example.com" required /></label>',
+      passwordField,
+      '<button class="button primary auth-submit" type="submit">' + submit + '</button>',
+      '</form>',
+      '<div class="auth-links">',
+      isReset ? '<button type="button" data-auth-mode="signin">로그인으로 돌아가기</button>' : '<button type="button" data-auth-mode="' + (isSignup ? 'signin' : 'signup') + '">' + (isSignup ? '이미 계정이 있어요' : '처음 시작할게요') + '</button>',
+      !isSignup && !isReset ? '<button type="button" data-auth-mode="reset">비밀번호를 잊었어요</button>' : '',
+      '</div>',
+      '<p class="auth-footnote">로그인하면 공동 공간의 데이터가 Supabase에 안전하게 저장됩니다.</p>'
+    ].join('');
+  }
+
+  function renderAuth(message) {
+    setAppVisible(false);
+    document.getElementById('authContent').innerHTML = authModeMarkup(message || '');
+  }
+
+  function setAuthBusy(isBusy) {
+    var form = document.getElementById('authForm');
+    if (!form) return;
+    form.classList.toggle('is-busy', isBusy);
+    form.querySelectorAll('input, button').forEach(function (element) { element.disabled = isBusy; });
+  }
+
+  function errorMessage(error, fallback) {
+    var message = error && error.message ? error.message : '';
+    if (/invalid login credentials/i.test(message)) return '이메일 또는 비밀번호를 확인해주세요.';
+    if (/email not confirmed/i.test(message)) return '이메일 인증을 완료한 뒤 로그인해주세요.';
+    if (/already registered|already exists/i.test(message)) return '이미 가입된 이메일이에요. 로그인해주세요.';
+    return message || fallback || '요청을 처리하지 못했어요. 잠시 후 다시 시도해주세요.';
+  }
+
+  async function handleAuthSubmit(form) {
+    if (!authClient) return;
+    var data = new FormData(form);
+    var email = String(data.get('email') || '').trim();
+    var password = String(data.get('password') || '');
+    var displayName = String(data.get('displayName') || '').trim();
+    setAuthBusy(true);
+    try {
+      if (authMode === 'signup') {
+        var signupResult = await authClient.auth.signUp({
+          email: email,
+          password: password,
+          options: { data: { display_name: displayName || email.split('@')[0] }, emailRedirectTo: appUrl() }
+        });
+        if (signupResult.error) throw signupResult.error;
+        if (signupResult.data && signupResult.data.session) return;
+        authMode = 'signin';
+        renderAuth('가입이 완료됐어요. 이메일 인증이 필요하면 메일을 확인한 뒤 로그인해주세요.');
+      } else if (authMode === 'reset') {
+        var resetResult = await authClient.auth.resetPasswordForEmail(email, { redirectTo: appUrl() });
+        if (resetResult.error) throw resetResult.error;
+        authMode = 'signin';
+        renderAuth('비밀번호 재설정 링크를 이메일로 보냈어요.');
+      } else {
+        var signinResult = await authClient.auth.signInWithPassword({ email: email, password: password });
+        if (signinResult.error) throw signinResult.error;
+      }
+    } catch (error) {
+      renderAuth(errorMessage(error, '인증 요청을 처리하지 못했어요.'));
+    } finally {
+      setAuthBusy(false);
+    }
   }
 
   function formatLongDate(iso) {
@@ -382,39 +524,31 @@
     return parsed;
   }
 
-  function loadState() {
-    try {
-      var stored = window.localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        var parsed = JSON.parse(stored);
-        var normalized = normalizeState(parsed);
-        if (normalized) return normalized;
-      }
-    } catch (error) {
-      console.warn('로컬 저장 데이터를 읽지 못했습니다.', error);
-    }
-    return createSeedState();
-  }
-
-  function saveState() {
-    try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    } catch (error) {
-      console.warn('로컬 저장에 실패했습니다.', error);
-    }
-  }
-
   function getCurrentSpace() {
-    return state.spaces.find(function (space) { return space.id === state.currentSpaceId; }) || state.spaces[0];
+    return state.spaces.find(function (space) { return space.id === state.currentSpaceId; }) || null;
   }
 
   function getCurrentUser() {
     var space = getCurrentSpace();
-    return space.members.find(function (member) { return member.id === state.currentUserId; }) || space.members[0];
+    var member = space && Array.isArray(space.members)
+      ? space.members.find(function (item) { return item.id === state.currentUserId; })
+      : null;
+    if (member) return member;
+    var profile = state.currentUserProfile || {};
+    var metadata = profile.user_metadata || {};
+    var name = metadata.display_name || metadata.name || (profile.email ? profile.email.split('@')[0] : '나');
+    return {
+      id: state.currentUserId,
+      name: name,
+      role: '나',
+      initials: String(name).slice(0, 1).toUpperCase(),
+      color: 'mint'
+    };
   }
 
   function getMember(space, memberId) {
-    return space.members.find(function (member) { return member.id === memberId; }) || space.members[0];
+    var found = (space.members || []).find(function (member) { return member.id === memberId; });
+    return found || getCurrentUser();
   }
 
   function getRecurring(space, recurringId) {
@@ -761,8 +895,52 @@
     ].join('');
   }
 
+  function adoptSpace(space, subscribe) {
+    if (!space) return;
+    var existingIndex = state.spaces.findIndex(function (item) { return item.id === space.id; });
+    if (existingIndex === -1) state.spaces.push(space);
+    else state.spaces[existingIndex] = space;
+    state.currentSpaceId = space.id;
+    if (store) store.setCurrentSpace(space.id);
+    if (subscribe) subscribeToSpace(space.id);
+  }
+
+  function subscribeToSpace(spaceId) {
+    if (!store || !spaceId) return;
+    if (realtimeUnsubscribe) {
+      realtimeUnsubscribe();
+      realtimeUnsubscribe = null;
+    }
+    realtimeUnsubscribe = store.subscribe(spaceId, function () {
+      window.clearTimeout(realtimeRefreshTimer);
+      realtimeRefreshTimer = window.setTimeout(async function () {
+        if (!store || state.currentSpaceId !== spaceId) return;
+        try {
+          var refreshed = await store.loadSpace(spaceId);
+          adoptSpace(refreshed, false);
+          render();
+        } catch (error) {
+          showToast(errorMessage(error, '공동 공간 변경사항을 새로고침하지 못했어요.'), 'error');
+        }
+      }, 280);
+    });
+  }
+
+  async function refreshCurrentSpace() {
+    var space = getCurrentSpace();
+    if (!store || !space) return;
+    var refreshed = await store.loadSpace(space.id);
+    adoptSpace(refreshed, true);
+    render();
+  }
+
   function render() {
     var space = getCurrentSpace();
+    if (!space) {
+      var emptyContent = document.getElementById('appContent');
+      if (emptyContent) emptyContent.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><strong>공동 공간을 준비하고 있어요.</strong><span>잠시만 기다려주세요.</span></div>';
+      return;
+    }
     var currentUser = getCurrentUser();
     var todayOpen = space.tasks.filter(function (task) { return task.dueDate === todayIso() && task.status !== 'done'; }).length;
     var content = document.getElementById('appContent');
@@ -873,12 +1051,12 @@
 
   function showInviteModal() {
     var space = getCurrentSpace();
-    var inviteLink = 'https://moa.example/join/' + encodeURIComponent(space.id) + '?code=' + encodeURIComponent(space.inviteCode);
+    var inviteLink = appUrl() + '?invite=' + encodeURIComponent(space.inviteCode || '');
     openModal([
       '<div class=\"modal-backdrop\" data-action=\"backdrop-close\">',
       '<section class=\"modal compact\" role=\"dialog\" aria-modal=\"true\" aria-labelledby=\"inviteModalTitle\">',
       '<div class=\"modal-head\"><div><h2 class=\"modal-title\" id=\"inviteModalTitle\">' + escapeHtml(space.name) + '에 초대하기</h2><p class=\"modal-description\">코드나 링크를 상대방에게 보내면 함께 시작할 수 있어요.</p></div><button class=\"modal-close\" data-action=\"close-modal\" type=\"button\" aria-label=\"닫기\">' + icon('close', 16) + '</button></div>',
-      '<div class=\"invite-box\"><div class=\"invite-code-label\">초대 코드</div><div class=\"invite-code\">' + escapeHtml(space.inviteCode) + '</div><p class=\"invite-code-help\">초대받는 사람이 모아에서 입력할 코드예요.</p></div>',
+      '<div class=\"invite-box\"><div class=\"invite-code-label\">초대 코드</div><div class=\"invite-code\">' + escapeHtml(space.inviteCode || '준비 중') + '</div><p class=\"invite-code-help\">초대받는 사람이 모아에서 입력할 코드예요.</p></div>',
       '<div class=\"invite-link-row\"><input class=\"invite-link-input\" id=\"inviteLinkInput\" readonly value=\"' + escapeHtml(inviteLink) + '\" /><button class=\"button soft small\" data-action=\"copy-invite\" type=\"button\">' + icon('copy', 14) + '<span>복사</span></button></div>',
       '<div class=\"modal-footer\"><button class=\"button outline\" data-action=\"close-modal\" type=\"button\">닫기</button><button class=\"button primary\" data-action=\"share-invite\" type=\"button\">' + icon('link', 14) + '<span>공유하기</span></button></div>',
       '</section>',
@@ -971,8 +1149,8 @@
     return rule;
   }
 
-  function handleTaskSubmit(form) {
-    var space = getCurrentSpace();
+  async function handleTaskSubmit(form) {
+    if (!store) return;
     var formData = new FormData(form);
     var sourceIdeaId = form.getAttribute('data-idea-id');
     var data = {
@@ -982,96 +1160,63 @@
       assigneeId: String(formData.get('assigneeId') || state.currentUserId),
       category: String(formData.get('category') || '기타'),
       repeat: String(formData.get('repeat') || 'none'),
-      note: String(formData.get('note') || '').trim()
+      note: String(formData.get('note') || '').trim(),
+      weekdays: [],
+      dayOfMonth: null,
+      cadence: '',
+      nextDate: null
     };
     if (!data.title) return;
+    if (data.repeat === 'weekly') data.weekdays = [dayOfWeek(data.dueDate)];
+    if (data.repeat === 'monthly') data.dayOfMonth = dateFromIso(data.dueDate).getDate();
+    data.cadence = data.repeat === 'monthly' ? '매월 ' + data.dayOfMonth + '일' : recurrenceLabel(data.repeat, data.weekdays);
+    if (data.repeat !== 'none') data.nextDate = nextDateForRule(data, data.dueDate);
 
-    var taskId = form.getAttribute('data-task-id');
-    if (taskId) {
-      var task = space.tasks.find(function (item) { return item.id === taskId; });
-      if (task) {
-        task.title = data.title;
-        task.dueDate = data.dueDate;
-        task.dueTime = data.dueTime;
-        task.assigneeId = data.assigneeId;
-        task.category = data.category;
-        task.note = data.note;
-        task.repeatType = data.repeat;
-        createRecurringFromForm(data, task);
-        saveState();
-        closeModal();
-        render();
-        showToast('할일을 수정했어요.');
+    var submitButton = form.querySelector('button[type="submit"]');
+    if (submitButton) submitButton.disabled = true;
+    try {
+      var taskId = form.getAttribute('data-task-id');
+      var updatedSpace;
+      if (sourceIdeaId && !taskId) {
+        updatedSpace = await store.convertIdeaToTask(sourceIdeaId, data);
+      } else if (taskId) {
+        updatedSpace = await store.updateTask(taskId, data);
+      } else {
+        updatedSpace = await store.createTask(data);
       }
-      return;
+      adoptSpace(updatedSpace, true);
+      closeModal();
+      render();
+      showToast(sourceIdeaId ? '아이디어를 할일로 바꿨어요.' : (data.repeat === 'none' ? '새 할일을 추가했어요.' : '반복 일정과 첫 할일을 만들었어요.'));
+    } catch (error) {
+      showToast(errorMessage(error, '할일을 저장하지 못했어요.'), 'error');
+    } finally {
+      if (submitButton) submitButton.disabled = false;
     }
-
-    var newTask = {
-      id: uid('task'),
-      title: data.title,
-      dueDate: data.dueDate,
-      dueTime: data.dueTime,
-      assigneeId: data.assigneeId,
-      category: data.category,
-      note: data.note,
-      status: 'open',
-      recurringId: null,
-      repeatType: data.repeat,
-      createdAt: todayIso(),
-      sourceIdeaId: sourceIdeaId || null
-    };
-    space.tasks.push(newTask);
-    createRecurringFromForm(data, newTask);
-    if (sourceIdeaId) {
-      var sourceIdea = getIdea(space, sourceIdeaId);
-      if (sourceIdea) {
-        sourceIdea.status = 'converted';
-        sourceIdea.convertedTaskId = newTask.id;
-        sourceIdea.updatedAt = todayIso();
-      }
-    }
-    saveState();
-    closeModal();
-    render();
-    showToast(sourceIdeaId ? '아이디어를 할일로 바꿨어요.' : (data.repeat === 'none' ? '새 할일을 추가했어요.' : '반복 일정과 첫 할일을 만들었어요.'));
   }
 
-  function handleIdeaSubmit(form) {
-    var space = getCurrentSpace();
+  async function handleIdeaSubmit(form) {
+    if (!store) return;
     var formData = new FormData(form);
     var title = String(formData.get('title') || '').trim();
     var body = String(formData.get('body') || '').trim();
     if (!title) return;
-
-    var ideaId = form.getAttribute('data-idea-id');
-    if (ideaId) {
-      var idea = getIdea(space, ideaId);
-      if (idea) {
-        idea.title = title;
-        idea.body = body;
-        idea.updatedAt = todayIso();
-        saveState();
-        closeModal();
-        render();
-        showToast('아이디어를 수정했어요.');
-      }
-      return;
+    var submitButton = form.querySelector('button[type="submit"]');
+    if (submitButton) submitButton.disabled = true;
+    try {
+      var ideaId = form.getAttribute('data-idea-id');
+      var updatedSpace = ideaId
+        ? await store.updateIdea(ideaId, { title: title, body: body })
+        : await store.createIdea({ title: title, body: body });
+      adoptSpace(updatedSpace, true);
+      closeModal();
+      render();
+      showToast(ideaId ? '아이디어를 수정했어요.' : '아이디어를 남겨두었어요.');
+    } catch (error) {
+      showToast(errorMessage(error, '아이디어를 저장하지 못했어요.'), 'error');
+    } finally {
+      if (submitButton) submitButton.disabled = false;
     }
-
-    space.ideas.push({
-      id: uid('idea'),
-      title: title,
-      body: body,
-      authorId: state.currentUserId,
-      status: 'inbox',
-      createdAt: todayIso(),
-      updatedAt: todayIso(),
-      convertedTaskId: null
-    });
-    saveState();
-    closeModal();
-    render();
-    showToast('아이디어를 남겨두었어요.');
   }
 
   function ensureNextOccurrence(task) {
@@ -1100,97 +1245,86 @@
     });
   }
 
-  function toggleTask(taskId) {
+  async function toggleTask(taskId) {
+    if (!store) return;
     var space = getCurrentSpace();
-    var task = space.tasks.find(function (item) { return item.id === taskId; });
+    var task = space && space.tasks.find(function (item) { return item.id === taskId; });
     if (!task) return;
-    if (task.status === 'done') {
-      task.status = 'open';
-      task.completedAt = null;
-      showToast('완료 표시를 되돌렸어요.');
-    } else {
-      task.status = 'done';
-      task.completedAt = new Date().toISOString();
-      ensureNextOccurrence(task);
-      showToast('잘했어요. 하나를 모았어요 ✦');
+    try {
+      var updatedSpace;
+      if (task.status === 'done') {
+        updatedSpace = await store.completeTask(taskId, false);
+      } else {
+        updatedSpace = await store.completeTask(taskId);
+      }
+      adoptSpace(updatedSpace, true);
+      render();
+      showToast(task.status === 'done' ? '완료 표시를 되돌렸어요.' : '잘했어요. 하나를 모았어요 ✦');
+    } catch (error) {
+      showToast(errorMessage(error, '할일 상태를 바꾸지 못했어요.'), 'error');
     }
-    saveState();
-    render();
   }
 
-  function postponeTask(taskId) {
-    var space = getCurrentSpace();
-    var task = space.tasks.find(function (item) { return item.id === taskId; });
-    if (!task || task.status === 'done') return;
-    var baseDate = task.dueDate < todayIso() ? todayIso() : task.dueDate;
-    task.dueDate = addDays(baseDate, 1);
-    task.postponedAt = new Date().toISOString();
-    saveState();
-    render();
-    showToast('할일을 하루 미뤘어요.');
+  async function postponeTask(taskId) {
+    if (!store) return;
+    try {
+      var updatedSpace = await store.postponeTask(taskId);
+      adoptSpace(updatedSpace, true);
+      render();
+      showToast('할일을 하루 미뤘어요.');
+    } catch (error) {
+      showToast(errorMessage(error, '할일을 하루 미루지 못했어요.'), 'error');
+    }
   }
 
-  function toggleIdeaArchive(ideaId) {
-    var space = getCurrentSpace();
-    var idea = getIdea(space, ideaId);
+  async function toggleIdeaArchive(ideaId) {
+    if (!store) return;
+    var idea = getIdea(getCurrentSpace(), ideaId);
     if (!idea) return;
-    if (idea.status === 'archived') {
-      idea.status = idea.convertedTaskId ? 'converted' : 'inbox';
-      showToast('아이디어를 다시 꺼냈어요.');
-    } else {
-      idea.status = 'archived';
-      showToast('아이디어를 보관했어요.');
+    var nextStatus = idea.status === 'archived' ? (idea.convertedTaskId ? 'converted' : 'inbox') : 'archived';
+    try {
+      var updatedSpace = await store.archiveIdea(ideaId, nextStatus);
+      adoptSpace(updatedSpace, true);
+      render();
+      showToast(nextStatus === 'archived' ? '아이디어를 보관했어요.' : '아이디어를 다시 꺼냈어요.');
+    } catch (error) {
+      showToast(errorMessage(error, '아이디어 상태를 바꾸지 못했어요.'), 'error');
     }
-    idea.updatedAt = todayIso();
-    saveState();
-    render();
   }
 
-  function resetDemoData() {
-    state = createSeedState();
-    activeView = 'today';
-    taskFilter = 'all';
-    ideaFilter = 'all';
-    ideaQuery = '';
-    saveState();
-    closeModal();
-    render();
-    showToast('데모 데이터를 초기화했어요.');
-  }
-
-  function toggleRecurring(recurringId) {
+  async function toggleRecurring(recurringId) {
     var space = getCurrentSpace();
     var recurring = getRecurring(space, recurringId);
     if (!recurring) return;
-    recurring.active = !recurring.active;
-    saveState();
-    render();
-    showToast(recurring.active ? '반복 일정을 다시 켰어요.' : '반복 일정을 잠시 멈췄어요.');
+    try {
+      var updatedSpace = await store.toggleRecurring(recurringId, !recurring.active);
+      adoptSpace(updatedSpace, true);
+      render();
+      showToast(recurring.active ? '반복 일정을 다시 켰어요.' : '반복 일정을 잠시 멈췄어요.');
+    } catch (error) {
+      showToast(errorMessage(error, '반복 일정을 변경하지 못했어요.'), 'error');
+    }
   }
 
-  function createSpace(form) {
+  async function createSpace(form) {
+    if (!store) return;
     var formData = new FormData(form);
     var name = String(formData.get('name') || '').trim();
     var type = String(formData.get('type') || '커플');
     if (!name) return;
-    var user = getCurrentUser();
-    var newSpace = {
-      id: uid('space'),
-      name: name,
-      type: type,
-      inviteCode: makeInviteCode(),
-      createdAt: todayIso(),
-      members: [{ id: user.id, name: user.name, role: '나', initials: user.initials, color: user.color }],
-      tasks: [],
-      recurring: [],
-      ideas: []
-    };
-    state.spaces.push(newSpace);
-    state.currentSpaceId = newSpace.id;
-    saveState();
-    closeModal();
-    render();
-    showToast('새 공동 공간을 만들었어요.');
+    var submitButton = form.querySelector('button[type="submit"]');
+    if (submitButton) submitButton.disabled = true;
+    try {
+      var newSpace = await store.createSpace(name, type);
+      adoptSpace(newSpace, true);
+      closeModal();
+      render();
+      showToast('새 공동 공간을 만들었어요.');
+    } catch (error) {
+      showToast(errorMessage(error, '공동 공간을 만들지 못했어요.'), 'error');
+    } finally {
+      if (submitButton) submitButton.disabled = false;
+    }
   }
 
   function copyText(value) {
@@ -1208,11 +1342,11 @@
     return Promise.resolve();
   }
 
-  function showToast(message) {
+  function showToast(message, kind) {
     var region = document.getElementById('toastRegion');
     var toast = document.createElement('div');
-    toast.className = 'toast';
-    toast.innerHTML = '<span class=\"toast-icon\">' + icon('check', 13) + '</span><span>' + escapeHtml(message) + '</span>';
+    toast.className = 'toast' + (kind === 'error' ? ' error' : '');
+    toast.innerHTML = '<span class=\"toast-icon\">' + icon(kind === 'error' ? 'close' : 'check', 13) + '</span><span>' + escapeHtml(message) + '</span>';
     region.appendChild(toast);
     window.clearTimeout(toastTimer);
     toastTimer = window.setTimeout(function () {
@@ -1228,6 +1362,13 @@
   }
 
   function handleClick(event) {
+    var authModeButton = event.target.closest('[data-auth-mode]');
+    if (authModeButton && authModeButton.tagName === 'BUTTON') {
+      authMode = authModeButton.getAttribute('data-auth-mode') || 'signin';
+      renderAuth();
+      return;
+    }
+
     var viewButton = event.target.closest('[data-view]');
     if (viewButton) {
       activeView = viewButton.getAttribute('data-view');
@@ -1279,6 +1420,10 @@
 
     if (action === 'backdrop-close' && event.target === actionTarget) {
       closeModal();
+    } else if (action === 'reload-page') {
+      window.location.reload();
+    } else if (action === 'logout') {
+      logout();
     } else if (action === 'close-modal') {
       closeModal();
     } else if (action === 'open-task-modal') {
@@ -1306,24 +1451,29 @@
       if (input) copyText(input.value).then(function () { showToast('초대 링크를 복사했어요.'); });
     } else if (action === 'share-invite') {
       var space = getCurrentSpace();
-      var link = 'https://moa.example/join/' + encodeURIComponent(space.id) + '?code=' + encodeURIComponent(space.inviteCode);
+      var link = appUrl() + '?invite=' + encodeURIComponent(space.inviteCode || '');
       if (navigator.share) {
         navigator.share({ title: '모아 공동 공간 초대', text: space.name + '에 함께 참여해요.', url: link }).catch(function () {});
       } else {
         copyText(link).then(function () { showToast('초대 링크를 복사했어요.'); });
       }
     } else if (action === 'switch-space') {
-      state.currentSpaceId = actionTarget.getAttribute('data-space-id');
-      saveState();
-      closeModal();
-      render();
-      showToast('공동 공간을 바꿨어요.');
+      if (!store) return;
+      store.selectSpace(actionTarget.getAttribute('data-space-id')).then(function (nextState) {
+        state = nextState;
+        closeModal();
+        subscribeToSpace(state.currentSpaceId);
+        render();
+        showToast('공동 공간을 바꿨어요.');
+      }).catch(function (error) {
+        showToast(errorMessage(error, '공동 공간을 바꾸지 못했어요.'), 'error');
+      });
     } else if (action === 'open-create-space') {
       showCreateSpaceModal();
     } else if (action === 'open-reset-modal') {
       showResetModal();
     } else if (action === 'reset-demo') {
-      resetDemoData();
+      logout();
     }
   }
 
@@ -1337,6 +1487,9 @@
     } else if (event.target.id === 'spaceForm') {
       event.preventDefault();
       createSpace(event.target);
+    } else if (event.target.id === 'authForm') {
+      event.preventDefault();
+      handleAuthSubmit(event.target);
     }
   }
 
@@ -1355,12 +1508,119 @@
     if (event.key === 'Escape') closeModal();
   }
 
-  function init() {
+  function emptyState() {
+    return {
+      currentSpaceId: null,
+      currentUserId: null,
+      currentUserProfile: null,
+      spaces: []
+    };
+  }
+
+  function clearRealtimeSubscription() {
+    if (realtimeUnsubscribe) {
+      realtimeUnsubscribe();
+      realtimeUnsubscribe = null;
+    }
+    window.clearTimeout(realtimeRefreshTimer);
+  }
+
+  async function logout() {
+    clearRealtimeSubscription();
+    if (store) {
+      try { await store.destroy(); } catch (error) { /* sign out still continues */ }
+    }
+    state = emptyState();
+    setAppVisible(false);
+    if (authClient) {
+      var result = await authClient.auth.signOut();
+      if (result.error) {
+        renderAuth(errorMessage(result.error, '로그아웃하지 못했어요.'));
+        return;
+      }
+    }
+    authMode = 'signin';
+    renderAuth('로그아웃했어요.');
+  }
+
+  async function startAuthenticatedSession() {
+    if (!store || sessionBooting) return;
+    sessionBooting = true;
+    try {
+      var user = await store.initSession();
+      var joinedSpace = null;
+      var inviteError = null;
+      if (pendingInviteCode) {
+        var inviteCode = pendingInviteCode;
+        try {
+          joinedSpace = await store.joinSpace(inviteCode);
+          pendingInviteCode = '';
+          clearInviteFromUrl();
+        } catch (error) {
+          inviteError = error;
+          pendingInviteCode = '';
+          clearInviteFromUrl();
+        }
+      }
+      state = await store.loadState(joinedSpace ? joinedSpace.id : state.currentSpaceId);
+      state.currentUserProfile = user;
+      setAppVisible(true);
+      render();
+      subscribeToSpace(state.currentSpaceId);
+
+      if (inviteError) showToast(errorMessage(inviteError, '초대 링크로 참여하지 못했어요.'), 'error');
+      if (joinedSpace) showToast('공동 공간에 참여했어요.');
+    } catch (error) {
+      clearRealtimeSubscription();
+      state = emptyState();
+      setAppVisible(false);
+      renderAuth(errorMessage(error, '공동 공간을 불러오지 못했어요.'));
+    } finally {
+      sessionBooting = false;
+    }
+  }
+
+  async function init() {
     document.addEventListener('click', handleClick);
     document.addEventListener('submit', handleSubmit);
     document.addEventListener('input', handleInput);
     document.addEventListener('keydown', handleKeydown);
-    render();
+
+    if (!globalThis.MoaSupabase || !globalThis.MoaSupabase.isConfigured()) {
+      configInstructions('Supabase URL과 Publishable/anon key가 아직 설정되지 않았습니다.');
+      return;
+    }
+
+    authClient = globalThis.MoaSupabase.createClient();
+    if (!authClient || !globalThis.MoaDataStore) {
+      configInstructions('Supabase 클라이언트를 초기화하지 못했습니다.');
+      return;
+    }
+    store = globalThis.MoaDataStore.create(authClient);
+
+    authClient.auth.onAuthStateChange(function (event, session) {
+      window.setTimeout(function () {
+        if (event === 'SIGNED_OUT' || !session) {
+          clearRealtimeSubscription();
+          state = emptyState();
+          setAppVisible(false);
+          renderAuth();
+        } else if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') {
+          startAuthenticatedSession();
+        }
+      }, 0);
+    });
+
+    var sessionResult = await authClient.auth.getSession();
+    if (sessionResult.error) {
+      renderAuth(errorMessage(sessionResult.error, '로그인 상태를 확인하지 못했어요.'));
+      return;
+    }
+    if (sessionResult.data && sessionResult.data.session) {
+      await startAuthenticatedSession();
+    } else {
+      renderAuth();
+    }
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
