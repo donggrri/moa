@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f7f7f4" />
+    <title>모아 — 함께 사는 하루를 가볍게</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" id="sidebar">
+        <div class="brand-block">
+          <div class="brand-mark">M</div>
+          <div>
+            <div class="brand-name">모아</div>
+            <div class="brand-caption">우리 생활을 한 팀으로</div>
+          </div>
+        </div>
+
+        <button class="space-switcher" id="spaceSwitcher" type="button">
+          <span class="space-icon">⌂</span>
+          <span class="space-switcher-copy">
+            <span class="eyebrow">공동 공간</span>
+            <strong id="sidebarSpaceName">우리 집</strong>
+          </span>
+          <span class="space-chevron">⌄</span>
+        </button>
+
+        <nav class="primary-nav" aria-label="주요 메뉴">
+          <button class="nav-item active" data-view="today" type="button">
+            <span class="nav-icon" data-icon="sun"></span>
+            <span>오늘</span>
+            <span class="nav-count" id="todayNavCount">0</span>
+          </button>
+          <button class="nav-item" data-view="all" type="button">
+            <span class="nav-icon" data-icon="list"></span>
+            <span>전체 할일</span>
+          </button>
+          <button class="nav-item" data-view="recurring" type="button">
+            <span class="nav-icon" data-icon="repeat"></span>
+            <span>반복 일정</span>
+          </button>
+          <button class="nav-item" data-view="members" type="button">
+            <span class="nav-icon" data-icon="users"></span>
+            <span>멤버</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-divider"></div>
+
+        <div class="sidebar-tip">
+          <div class="tip-icon">✦</div>
+          <div>
+            <strong>오늘의 약속</strong>
+            <p>작은 일을 나누면<br />하루가 조금 더 가벼워져요.</p>
+          </div>
+        </div>
+
+        <div class="sidebar-footer">
+          <div class="profile-avatar" id="currentUserAvatar">서</div>
+          <div class="profile-copy">
+            <strong id="currentUserName">서연</strong>
+            <span>나</span>
+          </div>
+          <button class="icon-button ghost" type="button" title="설정" aria-label="설정">
+            <span data-icon="settings"></span>
+          </button>
+        </div>
+      </aside>
+
+      <div class="mobile-scrim" id="mobileScrim"></div>
+
+      <main class="main-content">
+        <header class="topbar">
+          <button class="mobile-menu icon-button ghost" id="mobileMenu" type="button" aria-label="메뉴 열기">
+            <span data-icon="menu"></span>
+          </button>
+          <div class="topbar-context">
+            <span class="status-dot"></span>
+            <span>함께 쓰는 공간</span>
+          </div>
+          <div class="topbar-actions">
+            <button class="topbar-link" id="inviteButton" type="button">
+              <span data-icon="link"></span>
+              <span>초대하기</span>
+            </button>
+            <button class="button primary small" id="topAddButton" type="button">
+              <span data-icon="plus"></span>
+              <span>할일 추가</span>
+            </button>
+          </div>
+        </header>
+
+        <div class="page-content" id="appContent"></div>
+      </main>
+    </div>
+
+    <div id="modalRoot"></div>
+    <div class="toast-region" id="toastRegion" aria-live="polite"></div>
+
+    <script src="app.js" defer></script>
+  </body>
+</html>
