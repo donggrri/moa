@@ -40,7 +40,7 @@ Database → Replication에서 `tasks`, `ideas`, `recurrence_rules`, `membership
 - 할일은 브라우저에서 직접 INSERT/UPDATE/DELETE하지 않고 RPC를 통해 생성·수정·완료·연기합니다. 반복 규칙은 `active` 토글만 직접 허용하고, 생성·변경은 할일 RPC가 처리합니다.
 - 할일의 `recurrence_rule_id`는 같은 `space_id`의 규칙만 참조할 수 있도록 복합 FK로 묶입니다.
 - 아이디어의 생성과 제목·본문 수정은 허용하지만 `status`·`converted_task_id` 변경은 RPC 경로로 제한합니다.
-- 초대 코드는 `pgcrypto` 기반으로 생성되며, 생략 시 7일·10회 기본 제한이 적용됩니다.
+- 초대 코드는 `pgcrypto` 기반으로 생성되며, 생략 시 7일·20회 기본 제한이 적용됩니다. 만료되면 관리자 권한으로 새 초대를 발급할 수 있습니다.
 - 마지막 active owner membership은 삭제하거나 강등할 수 없습니다. 소유권 이전 UI는 아직 없으므로, 소유자가 공간을 떠나려면 먼저 다른 owner를 두어야 합니다.
 
 ## 6. 운영 전 확인

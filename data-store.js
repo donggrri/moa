@@ -315,6 +315,14 @@
       return loadSpace(joined.space_id);
     }
 
+    async function createInvite() {
+      var spaceId = requireSpaceId();
+      await callRpc('create_space_invite', {
+        p_space_id: spaceId
+      }, '새 초대 링크를 만들지 못했습니다. 관리자 권한이 필요할 수 있습니다.');
+      return refreshSelected();
+    }
+
     async function createTask(data) {
       var spaceId = requireSpaceId();
       await callRpc('create_task', taskArgs(spaceId, data), '할일을 저장하지 못했습니다.');
@@ -448,6 +456,7 @@
       setCurrentSpace: function (spaceId) { currentSpaceId = spaceId; },
       createSpace: createSpace,
       joinSpace: joinSpace,
+      createInvite: createInvite,
       createTask: createTask,
       updateTask: updateTask,
       completeTask: completeTask,

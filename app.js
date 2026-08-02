@@ -1051,8 +1051,20 @@
     ].join(''));
   }
 
-  function showInviteModal() {
+  async function showInviteModal() {
     var space = getCurrentSpace();
+    if (!space) return;
+    if (!space.inviteCode && store) {
+      try {
+        var refreshed = await store.createInvite();
+        adoptSpace(refreshed, true);
+        render();
+        space = getCurrentSpace();
+      } catch (error) {
+        showToast(errorMessage(error, '새 초대 링크를 만들지 못했어요.'), 'error');
+        return;
+      }
+    }
     var inviteLink = appUrl() + '?invite=' + encodeURIComponent(space.inviteCode || '');
     openModal([
       '<div class=\"modal-backdrop\" data-action=\"backdrop-close\">',

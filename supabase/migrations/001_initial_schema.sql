@@ -668,7 +668,7 @@ begin
   end if;
 
   v_expires_at := coalesce(p_expires_at, now() + interval '7 days');
-  v_max_uses := coalesce(p_max_uses, 10);
+  v_max_uses := coalesce(p_max_uses, 20);
 
   if v_expires_at <= now() then
     raise exception 'invite expiration must be in the future';
