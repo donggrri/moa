@@ -56,7 +56,7 @@ create table if not exists public.memberships (
 create table if not exists public.space_invites (
   id uuid primary key default gen_random_uuid(),
   space_id uuid not null references public.spaces(id) on delete cascade,
-  code text not null default upper(substr(md5(random()::text || clock_timestamp()::text), 1, 12)),
+  code text not null default upper(substr(encode(gen_random_bytes(9), 'hex'), 1, 12)),
   created_by uuid references auth.users(id) on delete set null,
   expires_at timestamptz,
   max_uses integer,
@@ -122,7 +122,9 @@ create table if not exists public.tasks (
   category text not null default '기타',
   note text,
   status text not null default 'open',
-  recurrence_rule_id uuid references public.recurrence_rules(id) on delete set null,
+  -- The composite foreign key below prevents a task from using a rule in
+  -- another space.
+  recurrence_rule_id uuid,
   source_idea_id uuid,
   created_by uuid references auth.users(id) on delete set null,
   created_at timestamptz not null default now(),
@@ -218,6 +220,63 @@ create unique index if not exists tasks_source_idea_unique
   on public.tasks (source_idea_id)
   where source_idea_id is not null;
 
+-- Keep existing projects safe when this migration is re-run after the
+-- original single-column recurrence foreign key was installed.
+alter table public.space_invites
+  alter column code set default upper(substr(encode(gen_random_bytes(9), 'hex'), 1, 12));
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'recurrence_rules_id_space_unique'
+      and conrelid = 'public.recurrence_rules'::regclass
+  ) then
+    alter table public.recurrence_rules
+      add constraint recurrence_rules_id_space_unique unique (id, space_id);
+  end if;
+end
+$$;
+
+-- Repair only impossible cross-space links before adding the stronger FK.
+update public.tasks t
+set recurrence_rule_id = null
+where t.recurrence_rule_id is not null
+  and not exists (
+    select 1
+    from public.recurrence_rules r
+    where r.id = t.recurrence_rule_id
+      and r.space_id = t.space_id
+  );
+
+do $$
+begin
+  if exists (
+    select 1
+    from pg_constraint
+    where conname = 'tasks_recurrence_rule_id_fkey'
+      and conrelid = 'public.tasks'::regclass
+  ) then
+    alter table public.tasks
+      drop constraint tasks_recurrence_rule_id_fkey;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'tasks_recurrence_rule_space_fkey'
+      and conrelid = 'public.tasks'::regclass
+  ) then
+    alter table public.tasks
+      add constraint tasks_recurrence_rule_space_fkey
+      foreign key (recurrence_rule_id, space_id)
+      references public.recurrence_rules (id, space_id)
+      on delete restrict;
+  end if;
+end
+$$;
+
 -- ---------------------------------------------------------------------------
 -- Trigger helpers
 -- ---------------------------------------------------------------------------
@@ -291,6 +350,53 @@ begin
 end;
 $$;
 
+create or replace function public.protect_last_space_owner()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_remaining integer;
+begin
+  if tg_op = 'DELETE' then
+    if old.role = 'owner' and old.status = 'active' then
+      select count(*) into v_remaining
+      from public.memberships m
+      where m.space_id = old.space_id
+        and m.status = 'active'
+        and m.role = 'owner'
+        and m.id is distinct from old.id;
+
+      if coalesce(v_remaining, 0) = 0 then
+        raise exception 'cannot remove the last owner of a space';
+      end if;
+    end if;
+    return old;
+  end if;
+
+  if old.role = 'owner'
+     and old.status = 'active'
+     and (
+       new.role is distinct from 'owner'
+       or new.status is distinct from 'active'
+     ) then
+    select count(*) into v_remaining
+    from public.memberships m
+    where m.space_id = old.space_id
+      and m.status = 'active'
+      and m.role = 'owner'
+      and m.id is distinct from old.id;
+
+    if coalesce(v_remaining, 0) = 0 then
+      raise exception 'cannot remove the last owner of a space';
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
 drop trigger if exists profiles_set_updated_at on public.profiles;
 create trigger profiles_set_updated_at
 before update on public.profiles
@@ -315,6 +421,11 @@ drop trigger if exists memberships_protect_identity on public.memberships;
 create trigger memberships_protect_identity
 before update on public.memberships
 for each row execute function public.protect_space_scoped_identity('membership');
+
+drop trigger if exists memberships_protect_last_owner on public.memberships;
+create trigger memberships_protect_last_owner
+before update of role, status or delete on public.memberships
+for each row execute function public.protect_last_space_owner();
 
 drop trigger if exists space_invites_set_updated_at on public.space_invites;
 create trigger space_invites_set_updated_at
@@ -549,17 +660,26 @@ set search_path = public
 as $$
 declare
   v_invite public.space_invites;
+  v_expires_at timestamptz;
+  v_max_uses integer;
 begin
   if not public.is_space_admin(p_space_id) then
     raise exception 'space admin permission required';
   end if;
 
-  if p_max_uses is not null and p_max_uses <= 0 then
+  v_expires_at := coalesce(p_expires_at, now() + interval '7 days');
+  v_max_uses := coalesce(p_max_uses, 10);
+
+  if v_expires_at <= now() then
+    raise exception 'invite expiration must be in the future';
+  end if;
+
+  if v_max_uses <= 0 then
     raise exception 'max uses must be positive';
   end if;
 
   insert into public.space_invites (space_id, created_by, expires_at, max_uses)
-  values (p_space_id, auth.uid(), p_expires_at, p_max_uses)
+  values (p_space_id, auth.uid(), v_expires_at, v_max_uses)
   returning * into v_invite;
 
   return v_invite;
@@ -1437,6 +1557,10 @@ for insert to authenticated
 with check (
   public.is_space_member(space_id)
   and created_by = auth.uid()
+  and (
+    assignee_id is null
+    or public.is_active_space_member(space_id, assignee_id)
+  )
 );
 
 drop policy if exists recurrence_rules_update_members on public.recurrence_rules;
@@ -1444,7 +1568,13 @@ create policy recurrence_rules_update_members
 on public.recurrence_rules
 for update to authenticated
 using (public.is_space_member(space_id))
-with check (public.is_space_member(space_id));
+with check (
+  public.is_space_member(space_id)
+  and (
+    assignee_id is null
+    or public.is_active_space_member(space_id, assignee_id)
+  )
+);
 
 drop policy if exists recurrence_rules_delete_creator_or_admin on public.recurrence_rules;
 create policy recurrence_rules_delete_creator_or_admin
@@ -1465,6 +1595,10 @@ for insert to authenticated
 with check (
   public.is_space_member(space_id)
   and created_by = auth.uid()
+  and (
+    assignee_id is null
+    or public.is_active_space_member(space_id, assignee_id)
+  )
 );
 
 drop policy if exists tasks_update_members on public.tasks;
@@ -1472,7 +1606,13 @@ create policy tasks_update_members
 on public.tasks
 for update to authenticated
 using (public.is_space_member(space_id))
-with check (public.is_space_member(space_id));
+with check (
+  public.is_space_member(space_id)
+  and (
+    assignee_id is null
+    or public.is_active_space_member(space_id, assignee_id)
+  )
+);
 
 drop policy if exists tasks_delete_creator_or_admin on public.tasks;
 create policy tasks_delete_creator_or_admin
@@ -1493,6 +1633,8 @@ for insert to authenticated
 with check (
   public.is_space_member(space_id)
   and author_id = auth.uid()
+  and status = 'inbox'
+  and converted_task_id is null
 );
 
 drop policy if exists ideas_update_members on public.ideas;
@@ -1527,14 +1669,17 @@ from anon, authenticated;
 grant select, insert, update on table public.profiles to authenticated;
 grant select, update on table public.spaces to authenticated;
 grant select, delete on table public.memberships to authenticated;
-grant select, insert, update, delete on table public.space_invites to authenticated;
-grant select, insert, update, delete on table public.recurrence_rules to authenticated;
-grant select, insert, update, delete on table public.tasks to authenticated;
-grant select, insert, update, delete on table public.ideas to authenticated;
+grant select on table public.space_invites to authenticated;
+grant select on table public.recurrence_rules to authenticated;
+grant update (active) on table public.recurrence_rules to authenticated;
+grant select on table public.tasks to authenticated;
+grant select, insert, delete on table public.ideas to authenticated;
+grant update (title, body) on table public.ideas to authenticated;
 
 revoke all on function public.set_updated_at() from public, anon, authenticated;
 revoke all on function public.protect_space_scoped_identity() from public, anon, authenticated;
 revoke all on function public.protect_space_creator() from public, anon, authenticated;
+revoke all on function public.protect_last_space_owner() from public, anon, authenticated;
 revoke all on function public.handle_new_user() from public, anon, authenticated;
 revoke all on function public.is_active_space_member(uuid, uuid) from public, anon, authenticated;
 revoke all on function public.is_space_member(uuid) from public, anon, authenticated;
