@@ -136,6 +136,8 @@
       '<p class="auth-description">' + escapeHtml(reason || '앱을 시작하려면 Supabase 프로젝트의 브라우저 공개 설정을 등록해주세요.') + '</p>',
       '<div class="setup-steps"><strong>연결 방법</strong><ol><li><code>supabase-config.example.js</code>를 복사해 같은 위치에 <code>supabase-config.js</code>를 만드세요.</li><li>Supabase의 Project URL과 Publishable/anon key를 입력하세요.</li><li>파일을 저장하고 이 페이지를 새로고침하세요.</li></ol></div>',
       '<pre class="setup-code"><code>' + escapeHtml(example) + '</code></pre>',
+      '<a class="button outline auth-submit" href="https://supabase.com/dashboard" target="_blank" rel="noreferrer">Supabase Dashboard 열기</a>',
+      '<p class="auth-footnote">프로젝트를 만든 뒤 <code>supabase/migrations/001_initial_schema.sql</code>을 SQL Editor에서 실행해야 합니다.</p>',
       '<p class="auth-footnote">브라우저에는 Publishable/anon key만 사용합니다. service_role 키는 절대 입력하지 마세요.</p>',
       '<button class="button primary auth-submit" data-action="reload-page" type="button">설정 후 새로고침</button>'
     ].join('');
