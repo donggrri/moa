@@ -2036,6 +2036,10 @@ svg {
   display: none !important;
 }
 
+.auth-gate[hidden] {
+  display: none !important;
+}
+
 .auth-gate {
   display: grid;
   min-height: 100vh;

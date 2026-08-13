@@ -94,12 +94,30 @@
       .replace(/'/g, '&#039;');
   }
 
+  function isInviteCode(value) {
+    return /^[A-Z0-9]{12}$/i.test(String(value || '').trim());
+  }
+
   function getInviteFromUrl() {
     try {
       var params = new URL(window.location.href).searchParams;
-      return params.get('invite') || params.get('code') || '';
+      var invite = params.get('invite') || '';
+      var code = params.get('code') || '';
+      if (isInviteCode(invite)) return invite.trim().toUpperCase();
+      if (isInviteCode(code)) return code.trim().toUpperCase();
+      return '';
     } catch (error) {
       return '';
+    }
+  }
+
+  function hasAuthCallbackParams() {
+    try {
+      var url = new URL(window.location.href);
+      var code = url.searchParams.get('code') || '';
+      return Boolean((code && !isInviteCode(code)) || url.hash.indexOf('access_token') !== -1);
+    } catch (error) {
+      return false;
     }
   }
 
@@ -111,7 +129,7 @@
     try {
       var url = new URL(window.location.href);
       url.searchParams.delete('invite');
-      url.searchParams.delete('code');
+      if (isInviteCode(url.searchParams.get('code') || '')) url.searchParams.delete('code');
       window.history.replaceState({}, document.title, url.pathname + (url.search ? url.search : '') + url.hash);
     } catch (error) {
       /* file:// 환경에서는 주소를 바꾸지 않습니다. */
@@ -1611,10 +1629,18 @@
       return;
     }
     store = globalThis.MoaDataStore.create(authClient);
+    setAppVisible(false);
+    document.getElementById('authContent').innerHTML = [
+      '<div class="auth-brand"><span class="brand-mark">M</span><div><strong>모아</strong><span>함께 쓰는 생활 공간</span></div></div>',
+      '<p class="auth-kicker">MOA SHARED SPACE</p>',
+      '<h1 class="auth-title">불러오는 중</h1>',
+      '<p class="auth-description">로그인 상태를 확인하고 있어요.</p>'
+    ].join('');
 
     authClient.auth.onAuthStateChange(function (event, session) {
       window.setTimeout(function () {
         if (event === 'SIGNED_OUT' || !session) {
+          if (event === 'INITIAL_SESSION' && hasAuthCallbackParams()) return;
           clearRealtimeSubscription();
           state = emptyState();
           setAppVisible(false);
