@@ -16,7 +16,11 @@ function Read-DotEnv([string]$Path) {
       return
     }
     $name, $value = $line.Split("=", 2)
-    $map[$name.Trim()] = $value.Trim()
+    $value = $value.Trim()
+    if (($value.StartsWith('"') -and $value.EndsWith('"')) -or ($value.StartsWith("'") -and $value.EndsWith("'"))) {
+      $value = $value.Substring(1, $value.Length - 2)
+    }
+    $map[$name.Trim()] = $value
   }
   return $map
 }

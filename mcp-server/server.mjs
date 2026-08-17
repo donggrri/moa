@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import http from "node:http";
 import { createInterface } from "node:readline";
@@ -13,6 +14,9 @@ const SUPPORTED_PROTOCOL_VERSIONS = new Set([
   "2024-11-05"
 ]);
 const REQUEST_TIMEOUT_MS = 10_000;
+export const DEFAULT_MAX_HTTP_BODY_BYTES = 1_048_576;
+const MAX_HTTP_BODY_BYTES = 10 * 1024 * 1024;
+const LOOPBACK_HTTP_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/;
@@ -137,6 +141,52 @@ export function loadConfig(environment = process.env) {
   });
 }
 
+function unquoteEnvironmentValue(value) {
+  if (
+    (value.startsWith("\"") && value.endsWith("\"")) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    return value.slice(1, -1);
+  }
+  return value;
+}
+
+export function normalizeHttpBindHost(rawHost, allowRemoteHost = false) {
+  let host = trimEnvironmentValue(rawHost) || "127.0.0.1";
+  if (host.startsWith("[") && host.endsWith("]") && host.length >= 2) {
+    host = host.slice(1, -1);
+  }
+  const canonical = host.toLowerCase();
+  if (!allowRemoteHost && !LOOPBACK_HTTP_HOSTS.has(canonical)) {
+    throw new ConfigurationError("MOA_MCP_HTTP_HOST는 127.0.0.1, localhost, ::1만 허용합니다.");
+  }
+  return canonical;
+}
+
+function parseHttpBodyLimit(rawValue) {
+  const raw = rawValue === undefined || rawValue === null || rawValue === ""
+    ? String(DEFAULT_MAX_HTTP_BODY_BYTES)
+    : String(rawValue).trim();
+  const value = Number(raw);
+  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value < 1 || value > MAX_HTTP_BODY_BYTES) {
+    throw new ConfigurationError(
+      "MOA_MCP_HTTP_MAX_BODY_BYTES must be an integer between 1 and " + MAX_HTTP_BODY_BYTES + "."
+    );
+  }
+  return value;
+}
+
+function secretEquals(left, right) {
+  const leftBuffer = Buffer.from(String(left));
+  const rightBuffer = Buffer.from(String(right));
+  const length = Math.max(leftBuffer.length, rightBuffer.length, 1);
+  const paddedLeft = Buffer.alloc(length);
+  const paddedRight = Buffer.alloc(length);
+  leftBuffer.copy(paddedLeft);
+  rightBuffer.copy(paddedRight);
+  return timingSafeEqual(paddedLeft, paddedRight) && leftBuffer.length === rightBuffer.length;
+}
+
 export function parseMcpTokens(raw) {
   const tokenMap = new Map();
   const source = trimEnvironmentValue(raw);
@@ -176,9 +226,11 @@ export function loadHttpServerConfig(environment = process.env) {
     throw new ConfigurationError("HTTP 모드에는 MOA_MCP_TOKENS가 필요합니다.");
   }
 
-  const host = trimEnvironmentValue(environment.MOA_MCP_HTTP_HOST) || "127.0.0.1";
-  const port = Number.parseInt(trimEnvironmentValue(environment.MOA_MCP_HTTP_PORT) || "8787", 10);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+  const allowRemoteHost = trimEnvironmentValue(environment.MOA_MCP_ALLOW_REMOTE_HOST).toLowerCase() === "true";
+  const host = normalizeHttpBindHost(environment.MOA_MCP_HTTP_HOST, allowRemoteHost);
+  const rawPort = trimEnvironmentValue(environment.MOA_MCP_HTTP_PORT) || "8787";
+  const port = Number(rawPort);
+  if (!/^\d+$/.test(rawPort) || !Number.isInteger(port) || port < 1 || port > 65535) {
     throw new ConfigurationError("MOA_MCP_HTTP_PORT가 올바르지 않습니다.");
   }
 
@@ -186,13 +238,15 @@ export function loadHttpServerConfig(environment = process.env) {
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
+  const maxBodyBytes = parseHttpBodyLimit(environment.MOA_MCP_HTTP_MAX_BODY_BYTES);
 
   return Object.freeze({
     ...supabase,
     host,
     port,
     tokenMap,
-    allowedOrigins
+    allowedOrigins,
+    maxBodyBytes
   });
 }
 
@@ -1153,21 +1207,61 @@ export async function handleHttpMcpRequest(request, options) {
   return { status: 200, headers: { "Content-Type": "application/json" }, body };
 }
 
-function readRequestBody(incoming) {
+class HttpBodyTooLargeError extends Error {
+  constructor() {
+    super("HTTP request body exceeds the configured limit.");
+    this.name = "HttpBodyTooLargeError";
+    this.code = "HTTP_BODY_TOO_LARGE";
+  }
+}
+
+function readRequestBody(incoming, maxBytes) {
   return new Promise((resolveBody, reject) => {
     const chunks = [];
-    incoming.on("data", (chunk) => chunks.push(chunk));
-    incoming.on("end", () => resolveBody(Buffer.concat(chunks).toString("utf8")));
-    incoming.on("error", reject);
+    let totalBytes = 0;
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+
+    incoming.on("error", (error) => fail(error));
+    const contentLength = Number(incoming.headers && incoming.headers["content-length"]);
+    if (Number.isSafeInteger(contentLength) && contentLength > maxBytes) {
+      incoming.resume();
+      fail(new HttpBodyTooLargeError());
+      return;
+    }
+
+    incoming.on("data", (chunk) => {
+      if (settled) return;
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      totalBytes += buffer.length;
+      if (totalBytes > maxBytes) {
+        incoming.resume();
+        fail(new HttpBodyTooLargeError());
+        return;
+      }
+      chunks.push(buffer);
+    });
+    incoming.on("end", () => {
+      if (settled) return;
+      settled = true;
+      resolveBody(Buffer.concat(chunks, totalBytes).toString("utf8"));
+    });
   });
 }
 
 export function startHttpServer(options) {
   const host = options.host || "127.0.0.1";
-  const port = options.port || 8787;
+  const port = options.port ?? 8787;
+  const maxBodyBytes = parseHttpBodyLimit(options.maxBodyBytes);
   const server = http.createServer(async (incoming, outgoing) => {
     try {
-      const body = incoming.method === "POST" ? await readRequestBody(incoming) : "";
+      const body = incoming.method === "POST"
+        ? await readRequestBody(incoming, maxBodyBytes)
+        : "";
       const result = await handleHttpMcpRequest({
         method: incoming.method,
         url: incoming.url,
@@ -1182,6 +1276,11 @@ export function startHttpServer(options) {
       }
       outgoing.end(typeof result.body === "string" ? result.body : JSON.stringify(result.body));
     } catch (error) {
+      if (error && error.code === "HTTP_BODY_TOO_LARGE") {
+        outgoing.writeHead(413, { "Content-Type": "application/json" });
+        outgoing.end(JSON.stringify({ error: "request body too large" }));
+        return;
+      }
       logError(error);
       outgoing.writeHead(500, { "Content-Type": "application/json" });
       outgoing.end(JSON.stringify({ error: "internal error" }));
@@ -1189,12 +1288,14 @@ export function startHttpServer(options) {
   });
 
   server.listen(port, host, () => {
+    const address = server.address();
+    const actualPort = address && typeof address === "object" ? address.port : port;
     console.error(JSON.stringify({
       level: "info",
       server: SERVER_NAME,
       transport: "http",
       host,
-      port
+      port: actualPort
     }));
   });
   return server;
@@ -1208,6 +1309,7 @@ async function main() {
     startHttpServer({
       host: httpConfig.host,
       port: httpConfig.port,
+      maxBodyBytes: httpConfig.maxBodyBytes,
       tokenMap: httpConfig.tokenMap,
       allowedOrigins: httpConfig.allowedOrigins,
       createOperations: (userId) => createMoaOperations({ db, userId })
