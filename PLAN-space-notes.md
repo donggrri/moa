@@ -1,8 +1,7 @@
 # PLAN: 공간 노트 (UpNote형 5기능)
 
-상태: Phase 1 완료. atomic-workflow 스킬은 이 머신에 없어 동일 역할을 이 파일로 대체한다.  
-워크트리: `C:\Users\tlsfmswls\Desktop\Note-space-notes` (`feat/space-notes`)  
-기준 커밋: `af88aee`
+상태: 클라우드에서 구현 중. 웹 UI·마이그레이션·공개 페이지를 이 브랜치에 추가했다.  
+적용: Supabase SQL Editor에서 `002_space_notes.sql`을 실행해야 노트가 실제로 저장된다.
 
 ## 한 줄 목표
 

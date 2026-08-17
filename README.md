@@ -9,13 +9,19 @@
 - 할일 추가, 담당자 지정, 완료/되돌리기, 하루 연기
 - 일·주·평일·월 반복 일정
 - 아이디어 저장·검색·보관·할일 전환
+- 공간 노트: 마크다운 작성, 이미지, `#태그` 검색, `[[위키링크]]` 그래프, 읽기 전용 공개 페이지
 - Supabase Realtime 기반 공동 공간 동기화
 - Codex 연동을 위한 로컬 MCP 서버
 
 ## Supabase 연결
 
 1. Supabase 프로젝트를 만듭니다.
-2. `supabase/migrations/001_initial_schema.sql`을 SQL Editor에서 실행합니다.
+2. SQL Editor에서 아래 파일을 **순서대로** 실행합니다.
+
+```text
+supabase/migrations/001_initial_schema.sql
+supabase/migrations/002_space_notes.sql
+```
 3. Authentication URL 설정에 다음 주소를 등록합니다.
 
 ```text

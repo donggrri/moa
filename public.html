@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex,nofollow" />
+    <meta name="referrer" content="strict-origin" />
+    <meta name="theme-color" content="#f7f7f4" />
+    <title>모아 공개 노트</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="public-note" id="publicNote">
+      <p class="public-note-kicker">MOA PUBLIC NOTE</p>
+      <h1>불러오는 중</h1>
+      <p class="auth-description">공개된 노트를 확인하고 있어요.</p>
+    </main>
+    <script
+      src="https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js"
+      integrity="sha384-wLhprpjsmjc/XYIcF+LpMxd8yS1gss6jhevOp6F6zhiIoFK6AmHtm4bGKtehTani"
+      crossorigin="anonymous"></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"
+      integrity="sha384-JEyTNhjM6R1ElGoJns4U2Ln4ofPcqzSsynQkmEc/KGy6336qAZl70tDLufbkla+3"
+      crossorigin="anonymous"></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.8/dist/umd/supabase.min.js"
+      integrity="sha384-Tve8O+C6PBzsIMK/IRCwHbi8fyEzXIlIs6OfVBZHubplwYhaQF/4Mzxqgg+pp/oy"
+      crossorigin="anonymous"></script>
+    <script src="supabase-config.js"></script>
+    <script src="supabase-client.js"></script>
+    <script src="notes-render.js"></script>
+    <script src="public-note.js"></script>
+  </body>
+</html>
