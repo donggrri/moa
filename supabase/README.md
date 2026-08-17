@@ -28,6 +28,8 @@ http://localhost:5173/
 - `url`: Supabase Project URL
 - `publishableKey`: publishable 또는 anon key
 
+새 대시보드에서는 `anon` 대신 **Publishable key** (`sb_publishable_...`)를 복사하면 됩니다. 로컬에서 인증 메일이 오지 않으면 Authentication → Providers → Email에서 Confirm email을 끄고 같은 계정으로 로그인하세요.
+
 이 값은 브라우저에 노출될 수 있는 공개 값입니다. service role key나 DB 비밀번호를 입력하면 안 됩니다.
 
 ## 4. Realtime
@@ -42,6 +44,7 @@ Database → Replication에서 `tasks`, `ideas`, `recurrence_rules`, `membership
 - 아이디어의 생성과 제목·본문 수정은 허용하지만 `status`·`converted_task_id` 변경은 RPC 경로로 제한합니다.
 - 초대 코드는 `pgcrypto` 기반으로 생성되며, 생략 시 7일·20회 기본 제한이 적용됩니다. 만료되면 관리자 권한으로 새 초대를 발급할 수 있습니다.
 - 마지막 active owner membership은 삭제하거나 강등할 수 없습니다. 소유권 이전 UI는 아직 없으므로, 소유자가 공간을 떠나려면 먼저 다른 owner를 두어야 합니다.
+- 날짜가 지난 미완료 할일은 삭제되지 않습니다. 웹의 **오늘** 화면은 당일 마감만 보여 주고, **전체 할일**에서 지연으로 표시합니다.
 
 ## 6. 운영 전 확인
 

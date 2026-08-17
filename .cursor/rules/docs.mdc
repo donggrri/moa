@@ -1,0 +1,17 @@
+---
+description: 문서·기능 대장·테스트를 어디에 갱신할지
+alwaysApply: true
+---
+
+# 문서와 기능 관리
+
+작업이 끝나면 아래를 따른다. 상세 표는 `docs/README.md`.
+
+- 다음 세션 손 위치 → `docs/CONTINUE.md`, `PROJECT_PLAN.md` 다음 작업 순서
+- 기능 완료 → `docs/FEATURES.md`에서 shipped로 옮기고, 테스트는 `tests/` (자동) 또는 `tests/release/` (체크리스트)
+- 사용법 → `README.md`와 해당 하위 README
+- MCP 운영 → `mcp-server/README.md`
+- 용어 → `CONTEXT.md`
+- 배포 전 → `docs/RELEASE.md` 절차, `npm test`
+
+완료된 기능을 `PROJECT_PLAN.md`에만 적거나 README에만 적지 않는다. `service_role`과 실토큰은 문서·커밋에 넣지 않는다.

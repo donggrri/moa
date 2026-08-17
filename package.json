@@ -1,0 +1,9 @@
+{
+  "name": "moa",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/mcp/server.test.mjs",
+    "test:release": "node --test tests/release/mcp-http.live.test.mjs"
+  }
+}

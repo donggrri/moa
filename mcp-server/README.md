@@ -1,59 +1,130 @@
 # 모아 MCP 서버
 
-`mcp-server/`는 모아의 Supabase 데이터를 Codex 같은 MCP 클라이언트에서 사용할 수 있게 하는 로컬 STDIO 서버입니다.
+`mcp-server/`는 모아의 Supabase 데이터를 Cursor·Codex·OpenCode 같은 MCP 클라이언트에서 쓰게 하는 서버입니다. 임의 SQL은 없고, 정해진 도구만 노출합니다.
 
-이 서버는 임의 SQL 실행 도구를 제공하지 않습니다. 정해진 8개 도구만 노출하고, 모든 요청을 `MOA_MCP_USER_ID`와 공간 membership으로 제한합니다. `MOA_SUPABASE_SERVICE_ROLE_KEY`는 이 Node.js 프로세스에서만 읽으며 MCP 응답, 표준 출력, 문서에 기록하지 않습니다.
+세 경로는 **같은 DB**를 보지만 서로 거치지 않습니다.
+
+- **웹**: GitHub Pages 또는 `localhost:5173` → publishable key + 이메일 로그인. MCP 없이 동작합니다. Pages는 MCP를 호스팅하지 않습니다.
+- **HTTP (현재 기본)**: 이 PC가 서버, Cursor가 클라이언트입니다. PC가 켜져 있고 `node server.mjs --http`가 떠 있을 때만 처리합니다. 클라이언트는 URL + Bearer만 보내고, `service_role`은 서버에만 둡니다.
+- **로컬 STDIO (대안)**: Cursor가 이 PC에서 `node server.mjs`를 자식 프로세스로 실행합니다. `.env`의 `MOA_MCP_USER_ID` 한 사람으로 고정됩니다.
+- **이후**: 같은 HTTP 서버를 라즈베리파이에서 systemd로 띄우고, 회사 PC는 Cloudflare Tunnel URL로 붙입니다.
+
+`MOA_SUPABASE_SERVICE_ROLE_KEY`는 이 Node 프로세스에서만 읽으며 MCP 응답·표준 출력·GitHub에 기록하지 않습니다. 클라이언트에 Supabase JWT를 넣어 DB로 다시 전달하지 않습니다.
 
 ## 포함 파일
 
-- `server.mjs`: 의존성 없는 Node.js MCP STDIO 서버와 Supabase REST/RPC 어댑터
+- `server.mjs`: STDIO와 `POST /mcp` HTTP, Supabase REST/RPC 어댑터
+- 단위 테스트: 저장소 `tests/mcp/server.test.mjs` (`npm test`). 릴리즈 체크리스트는 `tests/release/`
+- `.env.example`: 로컬 비밀 값 템플릿. 실제 값은 `.env`에만 둡니다
 - `package.json`: Node.js 실행 스크립트와 엔진 조건
+- `scripts/start-http.ps1`: 이 PC에서 HTTP 서버가 꺼져 있으면 시작
+- `scripts/install-startup.ps1`: Windows 로그온 시 서버 자동 시작
+- `scripts/uninstall-startup.ps1`: 자동 시작 해제
+- `scripts/moa-mcp-http.service`: 이후 라즈베리파이용 systemd 유닛 예시
 
 별도 패키지 설치가 필요하지 않습니다. Node.js 18 이상에 포함된 `fetch`를 사용합니다.
 
 ## 환경변수
 
-실행하는 컴퓨터에서 다음 세 값을 설정합니다.
+`mcp-server/.env`에 넣으면 서버가 시작 시 읽습니다. 이미 있는 환경변수는 덮어쓰지 않습니다.
+
+HTTP(현재 기본). `MOA_MCP_USER_ID`는 쓰지 않고, 토큰마다 사용자를 정합니다.
 
 ```powershell
 $env:MOA_SUPABASE_URL = "https://your-project.supabase.co"
 $env:MOA_SUPABASE_SERVICE_ROLE_KEY = "서버에서만 보관할 service_role 키"
+$env:MOA_MCP_TOKENS = "16자이상토큰:auth-user-uuid"
+$env:MOA_MCP_HTTP_HOST = "127.0.0.1"
+$env:MOA_MCP_HTTP_PORT = "8787"
+```
+
+여러 사용자는 쉼표로 나눕니다. `tokenA:uuid-a,tokenB:uuid-b`
+
+`MOA_MCP_HTTP_ORIGINS`를 넣으면 그 Origin만 브라우저 요청을 받습니다. Cursor 같은 네이티브 클라이언트는 Origin이 없으면 통과합니다.
+
+STDIO 대안:
+
+```powershell
 $env:MOA_MCP_USER_ID = "00000000-0000-0000-0000-000000000000"
 ```
 
-`MOA_MCP_USER_ID`는 Supabase Auth 사용자의 UUID입니다. 이 값을 고정된 MCP 사용자 ID로 사용하므로, 한 로컬 MCP 프로세스는 해당 사용자 권한으로 동작합니다.
-
 ## 실행
 
+지금 단계는 **이 PC가 켜져 있을 때만** HTTP 서버가 요청을 처리합니다. GitHub Pages에는 올리지 않습니다. HTTP는 인증 없이 `0.0.0.0`에 열지 마세요.
+
+한 번만 등록 (로그온 시 자동 시작):
+
 ```powershell
-cd C:\path\to\Note\mcp-server
-$env:MOA_SUPABASE_URL = "https://your-project.supabase.co"
-$env:MOA_SUPABASE_SERVICE_ROLE_KEY = "(터미널 세션에서만 설정)"
-$env:MOA_MCP_USER_ID = "your-auth-user-uuid"
+cd C:\Users\tlsfmswls\Desktop\Note\mcp-server
+npm run http:install
+```
+
+지금 바로 켜기:
+
+```powershell
+npm run http:start
+```
+
+또는 포그라운드:
+
+```powershell
+node .\server.mjs --http
+```
+
+정상 여부: `http://127.0.0.1:8787/health` → `{"ok":true}`
+
+자동 시작 해제:
+
+```powershell
+npm run http:uninstall
+```
+
+STDIO 대안:
+
+```powershell
 node .\server.mjs
 ```
 
-이 서버는 표준 입력으로 줄바꿈 단위 JSON-RPC를 받고 표준 출력으로 MCP 응답만 보냅니다. 진단 로그는 표준 오류로만 보냅니다. 따라서 MCP 클라이언트 설정의 `command`는 `node`, `args`는 이 디렉터리의 `server.mjs`를 가리키고, 세 환경변수를 해당 프로세스에만 전달해야 합니다.
+## Cursor / Codex / OpenCode
 
-예시:
+이 레포의 `.cursor/mcp.json`은 HTTP 클라이언트입니다. 서버가 `127.0.0.1:8787`에서 떠 있어야 합니다.
 
 ```json
 {
   "mcpServers": {
     "moa": {
-      "command": "node",
-      "args": ["C:\\path\\to\\Note\\mcp-server\\server.mjs"],
-      "env": {
-        "MOA_SUPABASE_URL": "https://your-project.supabase.co",
-        "MOA_SUPABASE_SERVICE_ROLE_KEY": "${MOA_SUPABASE_SERVICE_ROLE_KEY}",
-        "MOA_MCP_USER_ID": "your-auth-user-uuid"
+      "url": "http://127.0.0.1:8787/mcp",
+      "headers": {
+        "Authorization": "Bearer ${env:MOA_MCP_TOKEN}"
       }
     }
   }
 }
 ```
 
-실제 MCP 클라이언트의 설정 파일 위치와 환경변수 치환 문법은 클라이언트 문서를 따릅니다. 키를 이 JSON 파일에 직접 커밋하지 마세요.
+`npm run http:install`이 사용자 환경변수 `MOA_MCP_TOKEN`을 `.env`의 `MOA_MCP_TOKENS` 왼쪽 값과 맞춥니다. 적용하려면 Cursor를 재시작하세요. 토큰은 JSON에 하드코딩하지 마세요. `service_role`은 클라이언트에 넣지 않습니다.
+
+STDIO로 되돌리려면:
+
+```json
+{
+  "mcpServers": {
+    "moa": {
+      "command": "node",
+      "args": ["mcp-server/server.mjs"]
+    }
+  }
+}
+```
+
+## 이후: 라즈베리파이
+
+PC 대신 파이가 서버가 되면 Cursor URL만 바꿉니다. 서버 코드는 같습니다.
+
+1. 파이에 Node 18+와 `mcp-server/`·`.env`를 둡니다.
+2. `scripts/moa-mcp-http.service`의 경로를 고친 뒤 `systemctl enable --now moa-mcp-http`로 상시 실행합니다.
+3. 프로세스는 `127.0.0.1:8787`에 두고, 회사 PC 접근은 Cloudflare Tunnel 등 HTTPS 뒤에 둡니다.
+4. Cursor `url`을 `https://터널주소/mcp`로 바꿉니다. Bearer는 그대로입니다.
 
 ## 노출 도구
 
@@ -61,6 +132,7 @@ node .\server.mjs
 | --- | --- | --- |
 | `list_spaces` | 없음 | 현재 사용자가 membership을 가진 공간만 조회 |
 | `get_today_tasks` | `space_id` | 해당 공간의 로컬 프로세스 기준 오늘 할일 조회 |
+| `list_tasks` | `space_id`, 선택적 `due_date`, `status` | 할일 목록 조회. `status`는 `open` 또는 `done` |
 | `add_task` | `space_id`, `title`, `due_date`, 선택적 시간·담당자·분류·메모·`recurrence` | 할일 추가 |
 | `complete_task` | `space_id`, `task_id` | 할일 완료 및 반복 다음 회차 생성 |
 | `postpone_task` | `space_id`, `task_id` | 미완료 할일 하루 연기 |
@@ -161,11 +233,11 @@ convert_idea_to_task(
 5. RPC 함수도 같은 권한 검사를 수행해야 합니다. `service_role`은 RLS를 우회하므로 애플리케이션 검사와 RPC 검사가 모두 필요합니다.
 6. 입력 오류·권한 오류·계약 오류는 사용자에게 안전한 메시지만 반환합니다. Supabase 응답 본문, URL, 키, 스택 트레이스는 MCP 응답에 넣지 않습니다.
 
-`service_role` 키는 브라우저 웹 앱, GitHub Pages 정적 파일, Git 저장소, MCP 응답에 절대 넣지 마세요. 이 서버는 로컬 프로세스에서만 사용하도록 설계되어 있으며, 원격 HTTP 공개 서버로 전환할 때는 별도 사용자 인증과 토큰별 공간 권한 모델이 필요합니다.
+`service_role` 키는 브라우저 웹 앱, GitHub Pages 정적 파일, Git 저장소, MCP 응답에 절대 넣지 마세요. 지금 단계는 이 PC의 `127.0.0.1` HTTP만 사용합니다. 라즈베리파이로 옮길 때도 프로세스는 루프백에 두고 HTTPS 터널 뒤에 두며, 클라이언트에는 Bearer만 둡니다.
 
 ## 구현 범위 밖
 
 - Supabase migration을 자동 실행하지 않습니다.
 - 웹 앱의 `localStorage`를 이전하지 않습니다.
-- MCP를 HTTP로 공개하지 않습니다.
+- MCP를 인터넷에 직접 공개하지 않습니다. 지금은 `127.0.0.1`만, 이후 파이는 터널 뒤에 둡니다.
 - 임의 SQL, 임의 REST 테이블 경로, membership 변경, 초대 생성·참여 도구를 노출하지 않습니다.

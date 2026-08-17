@@ -3,12 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Local STDIO MCP server for the Moa shared-space data tools.",
+  "description": "Moa MCP server. HTTP is the default local transport; STDIO remains available.",
   "engines": {
     "node": ">=18.0.0"
   },
   "scripts": {
     "start": "node server.mjs",
-    "test": "node --test server.test.mjs"
+    "http": "node server.mjs --http",
+    "http:start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-http.ps1",
+    "http:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-startup.ps1",
+    "http:uninstall": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/uninstall-startup.ps1",
+    "test": "node --test ../tests/mcp/server.test.mjs"
   }
 }
