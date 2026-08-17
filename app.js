@@ -5,6 +5,15 @@
   var taskFilter = 'all';
   var ideaFilter = 'all';
   var ideaQuery = '';
+  var selectedNoteId = null;
+  var noteQuery = '';
+  var selectedTag = '';
+  var notePreview = false;
+  var graphShowOrphans = true;
+  var graphLocal = false;
+  var noteSaveTimer = null;
+  var noteAssetUrls = {};
+  var noteFocusField = null;
   var toastTimer;
   var store = null;
   var authClient = null;
@@ -39,7 +48,10 @@
     copy: '<rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>',
     pencil: '<path d="M12 20h9"></path><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4Z"></path>',
     userPlus: '<path d="M15 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8" cy="7" r="4"></circle><path d="M19 8v6M22 11h-6"></path>',
-    tag: '<path d="M20.59 13.41 11 3.83V3H4v7h.83l9.58 9.59a2 2 0 0 0 2.83 0l3.35-3.35a2 2 0 0 0 0-2.83Z"></path><path d="M7 7h.01"></path>'
+    tag: '<path d="M20.59 13.41 11 3.83V3H4v7h.83l9.58 9.59a2 2 0 0 0 2.83 0l3.35-3.35a2 2 0 0 0 0-2.83Z"></path><path d="M7 7h.01"></path>',
+    note: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z"></path><path d="M14 3v6h6M8 13h8M8 17h6"></path>',
+    graph: '<circle cx="6" cy="12" r="2.5"></circle><circle cx="18" cy="7" r="2.5"></circle><circle cx="18" cy="17" r="2.5"></circle><path d="M8.2 11.2 15.8 8.2M8.3 13.1 15.7 15.9"></path>',
+    image: '<rect x="3" y="5" width="18" height="14" rx="2"></rect><circle cx="9" cy="10" r="1.6"></circle><path d="m21 16-5.5-5.5L7 19"></path>'
   };
 
   function icon(name, size) {
@@ -155,7 +167,7 @@
       '<div class="setup-steps"><strong>연결 방법</strong><ol><li><code>supabase-config.example.js</code>를 복사해 같은 위치에 <code>supabase-config.js</code>를 만드세요.</li><li>Supabase의 Project URL과 Publishable/anon key를 입력하세요.</li><li>파일을 저장하고 이 페이지를 새로고침하세요.</li></ol></div>',
       '<pre class="setup-code"><code>' + escapeHtml(example) + '</code></pre>',
       '<a class="button outline auth-submit" href="https://supabase.com/dashboard" target="_blank" rel="noreferrer">Supabase Dashboard 열기</a>',
-      '<p class="auth-footnote">프로젝트를 만든 뒤 <code>supabase/migrations/001_initial_schema.sql</code>을 SQL Editor에서 실행해야 합니다.</p>',
+      '<p class="auth-footnote">프로젝트를 만든 뒤 <code>supabase/migrations/001_initial_schema.sql</code>과 <code>002_space_notes.sql</code>을 SQL Editor에서 실행해야 합니다.</p>',
       '<p class="auth-footnote">브라우저에는 Publishable/anon key만 사용합니다. service_role 키는 절대 입력하지 마세요.</p>',
       '<button class="button primary auth-submit" data-action="reload-page" type="button">설정 후 새로고침</button>'
     ].join('');
@@ -528,6 +540,9 @@
       space.tasks = Array.isArray(space.tasks) ? space.tasks : [];
       space.recurring = Array.isArray(space.recurring) ? space.recurring : [];
       space.ideas = Array.isArray(space.ideas) ? space.ideas : [];
+      space.notes = Array.isArray(space.notes) ? space.notes : [];
+      space.noteLinks = Array.isArray(space.noteLinks) ? space.noteLinks : [];
+      space.noteTagCounts = Array.isArray(space.noteTagCounts) ? space.noteTagCounts : [];
       space.ideas = space.ideas.map(function (idea) {
         return Object.assign({
           id: uid('idea'),
@@ -954,6 +969,384 @@
     render();
   }
 
+  function getNote(space, noteId) {
+    return (space.notes || []).find(function (note) { return note.id === noteId; }) || null;
+  }
+
+  function ensureSelectedNote(space) {
+    var notes = space.notes || [];
+    if (selectedNoteId && notes.some(function (note) { return note.id === selectedNoteId; })) return;
+    selectedNoteId = notes.length ? notes[0].id : null;
+  }
+
+  function filteredNotes(space) {
+    var query = String(noteQuery || '').trim().toLowerCase();
+    var tagFromQuery = '';
+    if (query.charAt(0) === '#') {
+      tagFromQuery = query.slice(1).replace(/\s+/g, '');
+      query = '';
+    }
+    var tag = (tagFromQuery || selectedTag || '').toLowerCase();
+    return (space.notes || []).filter(function (note) {
+      if (tag && !(note.tags || []).some(function (item) { return item === tag; })) return false;
+      if (!query) return true;
+      return String(note.title + ' ' + note.body).toLowerCase().indexOf(query) !== -1;
+    });
+  }
+
+  function noteWikiHandler(title) {
+    var space = getCurrentSpace();
+    var found = (space.notes || []).find(function (note) {
+      return String(note.title || '').trim().toLowerCase() === String(title || '').trim().toLowerCase();
+    });
+    if (!found) return title;
+    return '[' + title + '](#note:' + found.id + ')';
+  }
+
+  function renderNoteHtml(body) {
+    var helpers = window.MoaNotes || {};
+    if (typeof helpers.renderMarkdown !== 'function') {
+      return '<p>' + escapeHtml(body || '') + '</p>';
+    }
+    return helpers.renderMarkdown(body || '', {
+      assetUrls: noteAssetUrls,
+      wikiHandler: noteWikiHandler
+    });
+  }
+
+  function publicNoteUrl(token) {
+    var helpers = window.MoaNotes || {};
+    if (typeof helpers.publicShareUrl === 'function') return helpers.publicShareUrl(token);
+    return 'public.html#t=' + encodeURIComponent(token || '');
+  }
+
+  function renderNotes(space) {
+    ensureSelectedNote(space);
+    var notes = filteredNotes(space);
+    var selected = getNote(space, selectedNoteId);
+    var tags = space.noteTagCounts || [];
+    var backlinks = (space.noteLinks || []).filter(function (link) {
+      return selected && link.toNoteId === selected.id;
+    });
+    var noteList = notes.length
+      ? notes.map(function (note) {
+        return [
+          '<button class="note-list-item' + (note.id === selectedNoteId ? ' active' : '') + '" data-action="open-note" data-note-id="' + escapeHtml(note.id) + '" type="button">',
+          '<strong>' + escapeHtml(note.title) + '</strong>',
+          '<span>' + escapeHtml((note.tags || []).map(function (tag) { return '#' + tag; }).join(' ') || '태그 없음') + '</span>',
+          note.publishToken ? '<em>공개 중</em>' : '',
+          '</button>'
+        ].join('');
+      }).join('')
+      : '<div class="empty-state compact"><strong>노트가 없어요</strong><p>마크다운으로 우리 공간의 기록을 남겨보세요.</p></div>';
+
+    var tagList = tags.length
+      ? tags.map(function (row) {
+        return '<button class="filter-pill' + (selectedTag === row.tag ? ' active' : '') + '" data-note-tag="' + escapeHtml(row.tag) + '" type="button">#' + escapeHtml(row.tag) + ' ' + row.count + '</button>';
+      }).join('')
+      : '<p class="panel-subtitle">본문에 #태그를 쓰면 여기에 모여요.</p>';
+
+    var backlinkList = backlinks.length
+      ? backlinks.map(function (link) {
+        var from = getNote(space, link.fromNoteId);
+        if (!from) return '';
+        return '<button class="note-backlink" data-action="open-note" data-note-id="' + escapeHtml(from.id) + '" type="button">' + escapeHtml(from.title) + '</button>';
+      }).join('')
+      : '<p class="panel-subtitle">이 노트를 가리키는 [[위키링크]]가 아직 없어요.</p>';
+
+    var editor = selected
+      ? [
+        '<div class="note-editor-head">',
+        '<input class="note-title-input" data-note-title maxlength="200" value="' + escapeHtml(selected.title) + '" />',
+        '<div class="note-editor-actions">',
+        '<button class="button soft small" data-action="toggle-note-preview" type="button">' + (notePreview ? '원문' : '미리보기') + '</button>',
+        '<button class="button soft small" data-action="insert-note-image" type="button">' + icon('image', 14) + '<span>이미지</span></button>',
+        '<button class="button soft small" data-action="publish-note" type="button">' + (selected.publishToken ? '공개 중' : '공개') + '</button>',
+        '<button class="button outline small" data-action="delete-note" type="button">삭제</button>',
+        '</div></div>',
+        notePreview
+          ? '<div class="note-preview markdown-body">' + renderNoteHtml(selected.body) + '</div>'
+          : '<textarea class="note-body-input" data-note-body maxlength="102400" placeholder="마크다운, #태그, [[다른 노트]] 를 사용할 수 있어요.">' + escapeHtml(selected.body) + '</textarea>',
+        '<input id="noteImageInput" class="sr-only" type="file" accept="image/jpeg,image/png,image/webp" />',
+        selected.publishToken
+          ? '<div class="note-share-bar"><span>공개 링크는 아는 사람만 볼 수 있어요. 비밀은 아닙니다.</span><input class="invite-link-input" id="noteShareInput" readonly value="' + escapeHtml(publicNoteUrl(selected.publishToken)) + '" /><button class="button soft small" data-action="copy-note-link" type="button">복사</button><button class="button outline small" data-action="rotate-note-link" type="button">재발급</button><button class="button outline small" data-action="unpublish-note" type="button">공개 중지</button></div>'
+          : '<p class="note-share-hint">공개하면 로그인 없이 읽기 전용 페이지가 만들어집니다.</p>'
+      ].join('')
+      : '<div class="empty-state"><strong>노트를 선택하거나 새로 만들어 주세요.</strong></div>';
+
+    return [
+      '<section class="page-header"><div><p class="page-kicker">SPACE NOTES</p><h1 class="page-title">노트</h1><p class="page-description">공동 공간의 마크다운 기록입니다. 아이디어·할일과는 따로 둡니다.</p></div><button class="button primary" data-action="create-note" type="button">' + icon('plus', 15) + '<span>새 노트</span></button></section>',
+      '<section class="notes-layout">',
+      '<aside class="panel notes-list-panel">',
+      '<input class="idea-search" data-note-search type="search" value="' + escapeHtml(noteQuery) + '" placeholder="검색 또는 #태그" aria-label="노트 검색" />',
+      '<div class="note-list">' + noteList + '</div>',
+      '</aside>',
+      '<article class="panel notes-editor-panel">' + editor + '</article>',
+      '<aside class="panel notes-meta-panel">',
+      '<div class="panel-head"><div><h2 class="panel-title">태그</h2></div></div>',
+      '<div class="filter-bar wrap">' + tagList + '</div>',
+      selectedTag ? '<button class="idea-action-link" data-action="clear-note-tag" type="button">태그 필터 해제</button>' : '',
+      '<div class="panel-head" style="margin-top:18px"><div><h2 class="panel-title">백링크</h2></div></div>',
+      '<div class="note-backlinks">' + backlinkList + '</div>',
+      '</aside>',
+      '</section>'
+    ].join('');
+  }
+
+  function renderGraph(space) {
+    ensureSelectedNote(space);
+    return [
+      '<section class="page-header"><div><p class="page-kicker">NOTE GRAPH</p><h1 class="page-title">그래프 뷰</h1><p class="page-description">[[위키링크]]로 이어진 노트입니다. 점이 클수록 연결이 많아요.</p></div>',
+      '<div class="graph-toolbar">',
+      '<button class="filter-pill' + (graphLocal ? '' : ' active') + '" data-action="graph-global" type="button">전역</button>',
+      '<button class="filter-pill' + (graphLocal ? ' active' : '') + '" data-action="graph-local" type="button">로컬</button>',
+      '<button class="filter-pill' + (graphShowOrphans ? ' active' : '') + '" data-action="toggle-graph-orphans" type="button">고아 노트</button>',
+      '</div></section>',
+      '<article class="panel graph-panel"><div id="noteGraph" class="note-graph" role="img" aria-label="노트 연결 그래프"></div></article>'
+    ].join('');
+  }
+
+  function mountNoteGraph(space) {
+    var root = document.getElementById('noteGraph');
+    if (!root || typeof d3 === 'undefined') return;
+    var notes = space.notes || [];
+    var links = (space.noteLinks || []).filter(function (link) { return link.toNoteId; });
+    var degree = {};
+    notes.forEach(function (note) { degree[note.id] = 0; });
+    links.forEach(function (link) {
+      degree[link.fromNoteId] = (degree[link.fromNoteId] || 0) + 1;
+      degree[link.toNoteId] = (degree[link.toNoteId] || 0) + 1;
+    });
+    var visibleIds = {};
+    if (graphLocal && selectedNoteId) {
+      visibleIds[selectedNoteId] = true;
+      links.forEach(function (link) {
+        if (link.fromNoteId === selectedNoteId) visibleIds[link.toNoteId] = true;
+        if (link.toNoteId === selectedNoteId) visibleIds[link.fromNoteId] = true;
+      });
+    } else {
+      notes.forEach(function (note) { visibleIds[note.id] = true; });
+    }
+    var nodes = notes.filter(function (note) {
+      if (!visibleIds[note.id]) return false;
+      if (!graphShowOrphans && !degree[note.id]) return false;
+      return true;
+    }).map(function (note) {
+      return { id: note.id, title: note.title, degree: degree[note.id] || 0 };
+    });
+    var nodeSet = {};
+    nodes.forEach(function (node) { nodeSet[node.id] = true; });
+    var edges = links.filter(function (link) {
+      return nodeSet[link.fromNoteId] && nodeSet[link.toNoteId];
+    }).map(function (link) {
+      return { source: link.fromNoteId, target: link.toNoteId };
+    });
+    root.innerHTML = '';
+    if (!nodes.length) {
+      root.innerHTML = '<div class="empty-state"><strong>그릴 노트가 없어요</strong><p>노트를 만들고 [[제목]]으로 연결하면 점이 생겨요.</p></div>';
+      return;
+    }
+    var width = root.clientWidth || 640;
+    var height = Math.max(420, root.clientHeight || 480);
+    var svg = d3.select(root).append('svg').attr('width', width).attr('height', height);
+    var simulation = d3.forceSimulation(nodes)
+      .force('link', d3.forceLink(edges).id(function (d) { return d.id; }).distance(90))
+      .force('charge', d3.forceManyBody().strength(-180))
+      .force('center', d3.forceCenter(width / 2, height / 2));
+    var link = svg.append('g').attr('stroke', '#c5d0c4').selectAll('line').data(edges).enter().append('line').attr('stroke-width', 1.2);
+    var node = svg.append('g').selectAll('circle').data(nodes).enter().append('circle')
+      .attr('r', function (d) { return 6 + Math.min(14, d.degree * 3); })
+      .attr('fill', function (d) { return d.id === selectedNoteId ? '#4e7b5c' : '#86ae91'; })
+      .attr('stroke', '#fffefa')
+      .attr('stroke-width', 2)
+      .style('cursor', 'pointer')
+      .on('click', function (event, d) {
+        selectedNoteId = d.id;
+        activeView = 'notes';
+        render();
+      });
+    var label = svg.append('g').selectAll('text').data(nodes).enter().append('text')
+      .text(function (d) { return d.title; })
+      .attr('font-size', 11)
+      .attr('fill', '#4d5b50')
+      .attr('dx', 10)
+      .attr('dy', 4);
+    simulation.on('tick', function () {
+      link.attr('x1', function (d) { return d.source.x; }).attr('y1', function (d) { return d.source.y; })
+        .attr('x2', function (d) { return d.target.x; }).attr('y2', function (d) { return d.target.y; });
+      node.attr('cx', function (d) { return d.x; }).attr('cy', function (d) { return d.y; });
+      label.attr('x', function (d) { return d.x; }).attr('y', function (d) { return d.y; });
+    });
+  }
+
+  async function refreshSelectedNoteAssets() {
+    if (!store || !selectedNoteId) {
+      noteAssetUrls = {};
+      return;
+    }
+    try {
+      var assets = await store.listNoteAssets(selectedNoteId);
+      noteAssetUrls = await store.signedAssetUrls(assets);
+    } catch (error) {
+      noteAssetUrls = {};
+    }
+  }
+
+  function compressImageFile(file) {
+    return new Promise(function (resolve, reject) {
+      if (!file || !/^image\/(jpeg|png|webp)$/i.test(file.type)) {
+        reject(new Error('JPEG, PNG, WebP만 올릴 수 있어요.'));
+        return;
+      }
+      if (file.size > 5 * 1024 * 1024 && file.size <= 1024 * 1024) {
+        resolve(file);
+        return;
+      }
+      if (file.size <= 1024 * 1024) {
+        resolve(file);
+        return;
+      }
+      var objectUrl = URL.createObjectURL(file);
+      var image = new Image();
+      image.onload = function () {
+        URL.revokeObjectURL(objectUrl);
+        var shortest = Math.min(image.width, image.height) || 1;
+        var scale = shortest > 1000 ? 1000 / shortest : 1;
+        var canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(image.width * scale));
+        canvas.height = Math.max(1, Math.round(image.height * scale));
+        var context = canvas.getContext('2d');
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob(function (blob) {
+          if (!blob) {
+            resolve(file);
+            return;
+          }
+          resolve(new File([blob], (file.name || 'image').replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' }));
+        }, 'image/jpeg', 0.9);
+      };
+      image.onerror = function () {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error('이미지를 읽지 못했어요.'));
+      };
+      image.src = objectUrl;
+    });
+  }
+
+  function insertAtCursor(textarea, text) {
+    if (!textarea) return;
+    var start = textarea.selectionStart || 0;
+    var end = textarea.selectionEnd || 0;
+    var value = textarea.value || '';
+    textarea.value = value.slice(0, start) + text + value.slice(end);
+    var cursor = start + text.length;
+    textarea.setSelectionRange(cursor, cursor);
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  async function saveSelectedNote(options) {
+    if (!store || !selectedNoteId) return;
+    var space = getCurrentSpace();
+    var note = getNote(space, selectedNoteId);
+    if (!note) return;
+    var titleInput = document.querySelector('[data-note-title]');
+    var bodyInput = document.querySelector('[data-note-body]');
+    var title = titleInput ? String(titleInput.value || '').trim() : note.title;
+    var body = bodyInput ? String(bodyInput.value || '') : note.body;
+    if (!title) title = '제목 없는 노트';
+    if (title === note.title && body === note.body) return;
+    note.title = title;
+    note.body = body;
+    if (window.MoaNotes && typeof window.MoaNotes.extractTags === 'function') {
+      note.tags = window.MoaNotes.extractTags(title + '\n' + body);
+    }
+    try {
+      var updated = await store.updateNote(selectedNoteId, { title: title, body: body });
+      adoptSpace(updated, true);
+      if (!options || !options.silentRender) render();
+    } catch (error) {
+      showToast(errorMessage(error, '노트를 저장하지 못했어요.'), 'error');
+    }
+  }
+
+  function scheduleNoteSave() {
+    window.clearTimeout(noteSaveTimer);
+    noteSaveTimer = window.setTimeout(function () {
+      saveSelectedNote({ silentRender: true });
+    }, 700);
+  }
+
+  async function createNote() {
+    if (!store) return;
+    try {
+      var space = await store.createNote({ title: '새 노트', body: '' });
+      adoptSpace(space, true);
+      selectedNoteId = space.createdNoteId || selectedNoteId;
+      activeView = 'notes';
+      notePreview = false;
+      render();
+      showToast('새 노트를 만들었어요.');
+    } catch (error) {
+      showToast(errorMessage(error, '노트를 만들지 못했어요.'), 'error');
+    }
+  }
+
+  async function deleteSelectedNote() {
+    if (!store || !selectedNoteId) return;
+    if (!window.confirm('이 노트를 삭제할까요?')) return;
+    try {
+      var updated = await store.deleteNote(selectedNoteId);
+      selectedNoteId = null;
+      adoptSpace(updated, true);
+      render();
+      showToast('노트를 삭제했어요.');
+    } catch (error) {
+      showToast(errorMessage(error, '노트를 삭제하지 못했어요.'), 'error');
+    }
+  }
+
+  async function publishSelectedNote(publish) {
+    if (!store || !selectedNoteId) return;
+    try {
+      var updated = await store.setNotePublished(selectedNoteId, publish);
+      adoptSpace(updated, true);
+      render();
+      showToast(publish ? '공개 링크를 만들었어요.' : '공개를 중지했어요.');
+    } catch (error) {
+      showToast(errorMessage(error, '공개 상태를 바꾸지 못했어요.'), 'error');
+    }
+  }
+
+  async function rotateSelectedNoteLink() {
+    if (!store || !selectedNoteId) return;
+    try {
+      var updated = await store.rotateNotePublishToken(selectedNoteId);
+      adoptSpace(updated, true);
+      render();
+      showToast('공개 링크를 새로 발급했어요. 이전 주소는 더 이상 열리지 않아요.');
+    } catch (error) {
+      showToast(errorMessage(error, '공개 링크를 다시 만들지 못했어요.'), 'error');
+    }
+  }
+
+  async function uploadNoteImage(file) {
+    if (!store || !selectedNoteId || !file) return;
+    try {
+      var prepared = await compressImageFile(file);
+      if (prepared.size > 5 * 1024 * 1024) {
+        showToast('이미지는 5MB 이하여야 해요.', 'error');
+        return;
+      }
+      var asset = await store.createNoteAsset(selectedNoteId, prepared);
+      await refreshSelectedNoteAssets();
+      var textarea = document.querySelector('[data-note-body]');
+      insertAtCursor(textarea, '\n![이미지](moa-asset:' + asset.id + ')\n');
+      showToast('이미지를 넣었어요.');
+    } catch (error) {
+      showToast(errorMessage(error, '이미지를 넣지 못했어요.'), 'error');
+    }
+  }
+
   function render() {
     var space = getCurrentSpace();
     if (!space) {
@@ -971,6 +1364,13 @@
     document.getElementById('todayNavCount').textContent = todayOpen;
     var ideasNavCount = document.getElementById('ideasNavCount');
     if (ideasNavCount) ideasNavCount.textContent = space.ideas.filter(function (idea) { return idea.status === 'inbox'; }).length;
+    var notesNavCount = document.getElementById('notesNavCount');
+    if (notesNavCount) notesNavCount.textContent = (space.notes || []).length;
+    var topAdd = document.getElementById('topAddButton');
+    if (topAdd) {
+      var addLabel = topAdd.querySelector('span:last-child');
+      if (addLabel) addLabel.textContent = (activeView === 'notes' || activeView === 'graph') ? '노트 추가' : '할일 추가';
+    }
     document.querySelectorAll('.nav-item').forEach(function (item) {
       item.classList.toggle('active', item.getAttribute('data-view') === activeView);
     });
@@ -979,9 +1379,28 @@
     else if (activeView === 'recurring') content.innerHTML = renderRecurring(space);
     else if (activeView === 'members') content.innerHTML = renderMembers(space);
     else if (activeView === 'ideas') content.innerHTML = renderIdeas(space);
+    else if (activeView === 'notes') content.innerHTML = renderNotes(space);
+    else if (activeView === 'graph') content.innerHTML = renderGraph(space);
     else content.innerHTML = renderToday(space);
 
     hydrateIcons(document);
+    if (activeView === 'graph') mountNoteGraph(space);
+    if (activeView === 'notes') {
+      if (noteFocusField === 'title') {
+        var titleInput = document.querySelector('[data-note-title]');
+        if (titleInput) titleInput.focus();
+      } else if (noteFocusField === 'body') {
+        var bodyInput = document.querySelector('[data-note-body]');
+        if (bodyInput) bodyInput.focus();
+      }
+      refreshSelectedNoteAssets().then(function () {
+        if (notePreview && activeView === 'notes') {
+          var preview = document.querySelector('.note-preview');
+          var current = getNote(getCurrentSpace(), selectedNoteId);
+          if (preview && current) preview.innerHTML = renderNoteHtml(current.body);
+        }
+      });
+    }
   }
 
   function hydrateIcons(root) {
@@ -1405,6 +1824,7 @@
     if (viewButton) {
       activeView = viewButton.getAttribute('data-view');
       taskFilter = 'all';
+      noteFocusField = null;
       closeMobileMenu();
       render();
       return;
@@ -1424,8 +1844,26 @@
       return;
     }
 
+    var noteTagButton = event.target.closest('[data-note-tag]');
+    if (noteTagButton) {
+      selectedTag = noteTagButton.getAttribute('data-note-tag') || '';
+      render();
+      return;
+    }
+
+    var noteAnchor = event.target.closest('a[href^="#note:"]');
+    if (noteAnchor) {
+      event.preventDefault();
+      selectedNoteId = noteAnchor.getAttribute('href').replace('#note:', '');
+      activeView = 'notes';
+      notePreview = false;
+      render();
+      return;
+    }
+
     if (event.target.closest('#topAddButton')) {
-      showTaskModal();
+      if (activeView === 'notes' || activeView === 'graph') createNote();
+      else showTaskModal();
       return;
     }
     if (event.target.closest('#inviteButton')) {
@@ -1504,6 +1942,44 @@
       showCreateSpaceModal();
     } else if (action === 'open-reset-modal') {
       showResetModal();
+    } else if (action === 'create-note') {
+      createNote();
+    } else if (action === 'open-note') {
+      selectedNoteId = actionTarget.getAttribute('data-note-id');
+      activeView = 'notes';
+      notePreview = false;
+      render();
+    } else if (action === 'toggle-note-preview') {
+      saveSelectedNote({ silentRender: true }).then(function () {
+        notePreview = !notePreview;
+        render();
+      });
+    } else if (action === 'insert-note-image') {
+      var imageInput = document.getElementById('noteImageInput');
+      if (imageInput) imageInput.click();
+    } else if (action === 'delete-note') {
+      deleteSelectedNote();
+    } else if (action === 'publish-note') {
+      publishSelectedNote(true);
+    } else if (action === 'unpublish-note') {
+      publishSelectedNote(false);
+    } else if (action === 'rotate-note-link') {
+      rotateSelectedNoteLink();
+    } else if (action === 'copy-note-link') {
+      var shareInput = document.getElementById('noteShareInput');
+      if (shareInput) copyText(shareInput.value).then(function () { showToast('공개 링크를 복사했어요.'); });
+    } else if (action === 'clear-note-tag') {
+      selectedTag = '';
+      render();
+    } else if (action === 'graph-global') {
+      graphLocal = false;
+      render();
+    } else if (action === 'graph-local') {
+      graphLocal = true;
+      render();
+    } else if (action === 'toggle-graph-orphans') {
+      graphShowOrphans = !graphShowOrphans;
+      render();
     } else if (action === 'reset-demo') {
       logout();
     }
@@ -1526,14 +2002,69 @@
   }
 
   function handleInput(event) {
-    if (!event.target.matches('[data-idea-search]')) return;
-    ideaQuery = event.target.value;
-    render();
-    var searchInput = document.querySelector('[data-idea-search]');
-    if (searchInput) {
-      searchInput.focus();
-      searchInput.setSelectionRange(ideaQuery.length, ideaQuery.length);
+    if (event.target.matches('[data-idea-search]')) {
+      ideaQuery = event.target.value;
+      render();
+      var searchInput = document.querySelector('[data-idea-search]');
+      if (searchInput) {
+        searchInput.focus();
+        searchInput.setSelectionRange(ideaQuery.length, ideaQuery.length);
+      }
+      return;
     }
+    if (event.target.matches('[data-note-search]')) {
+      noteQuery = event.target.value;
+      render();
+      var noteSearch = document.querySelector('[data-note-search]');
+      if (noteSearch) {
+        noteSearch.focus();
+        noteSearch.setSelectionRange(noteQuery.length, noteQuery.length);
+      }
+      return;
+    }
+    if (event.target.matches('[data-note-title]')) {
+      noteFocusField = 'title';
+      var liveTitle = getNote(getCurrentSpace(), selectedNoteId);
+      if (liveTitle) liveTitle.title = event.target.value;
+      scheduleNoteSave();
+      return;
+    }
+    if (event.target.matches('[data-note-body]')) {
+      noteFocusField = 'body';
+      var liveNote = getNote(getCurrentSpace(), selectedNoteId);
+      if (liveNote) liveNote.body = event.target.value;
+      scheduleNoteSave();
+    }
+  }
+
+  function handleChange(event) {
+    if (event.target.id !== 'noteImageInput') return;
+    var file = event.target.files && event.target.files[0];
+    event.target.value = '';
+    if (file) uploadNoteImage(file);
+  }
+
+  function handlePaste(event) {
+    if (!event.target.matches('[data-note-body]')) return;
+    var items = event.clipboardData && event.clipboardData.items;
+    if (!items) return;
+    var i;
+    for (i = 0; i < items.length; i += 1) {
+      if (items[i].type.indexOf('image/') === 0) {
+        event.preventDefault();
+        var file = items[i].getAsFile();
+        if (file) uploadNoteImage(file);
+        return;
+      }
+    }
+  }
+
+  function handleDrop(event) {
+    if (!event.target.matches('[data-note-body]')) return;
+    var files = event.dataTransfer && event.dataTransfer.files;
+    if (!files || !files.length) return;
+    event.preventDefault();
+    uploadNoteImage(files[0]);
   }
 
   function handleKeydown(event) {
@@ -1616,6 +2147,12 @@
     document.addEventListener('click', handleClick);
     document.addEventListener('submit', handleSubmit);
     document.addEventListener('input', handleInput);
+    document.addEventListener('change', handleChange);
+    document.addEventListener('paste', handlePaste);
+    document.addEventListener('drop', handleDrop);
+    document.addEventListener('dragover', function (event) {
+      if (event.target.matches('[data-note-body]')) event.preventDefault();
+    });
     document.addEventListener('keydown', handleKeydown);
 
     if (!globalThis.MoaSupabase || !globalThis.MoaSupabase.isConfigured()) {

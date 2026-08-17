@@ -6,7 +6,10 @@ Supabase Dashboard의 SQL Editor에서 다음 파일을 통째로 실행합니�
 
 ```text
 supabase/migrations/001_initial_schema.sql
+supabase/migrations/002_space_notes.sql
 ```
+
+`001`은 할일·아이디어·초대, `002`는 공간 노트·태그·위키링크·이미지 Storage·공개 페이지 RPC를 만듭니다. Storage 버킷 `note-images`도 `002`가 생성합니다.
 
 이 migration은 profiles, spaces, memberships, 초대, 할일, 반복 일정, 아이디어 테이블과 RLS 정책을 생성합니다. `create_space`, `create_space_invite`, `join_space`, `create_task`, `update_task`, `complete_task`, `postpone_task`, `archive_idea`, `convert_idea_to_task` 등 웹과 MCP가 함께 사용하는 함수도 포함합니다.
 
@@ -34,10 +37,11 @@ http://localhost:5173/
 
 ## 4. Realtime
 
-Database → Replication에서 `tasks`, `ideas`, `recurrence_rules`, `memberships`의 변경 스트림이 활성화되어 있는지 확인합니다. migration이 publication에 추가를 시도하지만, 프로젝트 설정에 따라 Dashboard에서 한 번 더 확인해야 할 수 있습니다.
+Database → Replication에서 `tasks`, `ideas`, `recurrence_rules`, `memberships`, `notes`의 변경 스트림이 활성화되어 있는지 확인합니다. migration이 publication에 추가를 시도하지만, 프로젝트 설정에 따라 Dashboard에서 한 번 더 확인해야 할 수 있습니다.
 
 ## 5. 보안·권한 제한
 
+- 노트 생성·수정·공개·이미지 등록은 RPC로만 합니다. anon은 `get_published_note(token)`으로 공개된 한 건만 읽을 수 있습니다.
 - 할당자는 비워 두거나 같은 공간의 active 멤버로만 지정할 수 있습니다.
 - 할일은 브라우저에서 직접 INSERT/UPDATE/DELETE하지 않고 RPC를 통해 생성·수정·완료·연기합니다. 반복 규칙은 `active` 토글만 직접 허용하고, 생성·변경은 할일 RPC가 처리합니다.
 - 할일의 `recurrence_rule_id`는 같은 `space_id`의 규칙만 참조할 수 있도록 복합 FK로 묶입니다.
