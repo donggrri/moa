@@ -13,6 +13,10 @@
     "http:start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-http.ps1",
     "http:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-startup.ps1",
     "http:uninstall": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/uninstall-startup.ps1",
-    "test": "node --test ../tests/mcp/server.test.mjs"
+    "test": "node --test ../tests/mcp/server.test.mjs",
+    "test:release": "node ../tests/release/run.mjs --strict",
+    "test:release:strict": "node ../tests/release/run.mjs --strict",
+    "test:release:smoke": "node ../tests/release/run.mjs --smoke",
+    "test:smoke": "node ../tests/release/run.mjs --smoke"
   }
 }

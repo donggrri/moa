@@ -14,7 +14,7 @@
 ## 포함 파일
 
 - `server.mjs`: STDIO와 `POST /mcp` HTTP, Supabase REST/RPC 어댑터
-- 단위 테스트: 저장소 `tests/mcp/server.test.mjs` (`npm test`). 릴리즈 체크리스트는 `tests/release/`
+- 단위 테스트: 저장소 `tests/mcp/server.test.mjs` (`npm test`). 실서버 릴리즈 검증은 `npm run test:release` (Strict 모드), 개발용 스모크는 `npm run test:smoke` (Smoke 모드). 체크리스트는 `tests/release/`
 - `.env.example`: 로컬 비밀 값 템플릿. 실제 값은 `.env`에만 둡니다
 - `package.json`: Node.js 실행 스크립트와 엔진 조건
 - `scripts/start-http.ps1`: 이 PC에서 HTTP 서버가 꺼져 있으면 시작
@@ -40,7 +40,11 @@ $env:MOA_MCP_HTTP_PORT = "8787"
 
 여러 사용자는 쉼표로 나눕니다. `tokenA:uuid-a,tokenB:uuid-b`
 
-`MOA_MCP_HTTP_ORIGINS`를 넣으면 그 Origin만 브라우저 요청을 받습니다. Cursor 같은 네이티브 클라이언트는 Origin이 없으면 통과합니다.
+`MOA_MCP_HTTP_ORIGINS`를 넣으면 해당 Origin에 한해 CORS가 활성화됩니다.
+- 허용된 Origin의 요청은 Preflight(`OPTIONS /mcp`, 204 No Content) 및 실제 응답(200, 202, 400, 401, 404, 405, 413, 500)에 `Access-Control-Allow-Origin: <origin>`이 일관되게 포함됩니다.
+- Preflight 응답은 `Access-Control-Allow-Methods: POST, OPTIONS`와 `Access-Control-Allow-Headers: Authorization, Content-Type, MCP-Protocol-Version`를 반환합니다.
+- 허용 목록에 없는 브라우저 Origin은 403 Forbidden(`{ error: "origin not allowed" }`)을 반환하며 CORS 헤더를 노출하지 않습니다.
+- Cursor 등 Origin 헤더가 없는 네이티브 클라이언트는 CORS 헤더 없이 정상 통과합니다.
 
 STDIO 대안:
 
@@ -55,7 +59,7 @@ $env:MOA_MCP_USER_ID = "00000000-0000-0000-0000-000000000000"
 한 번만 등록 (로그온 시 자동 시작):
 
 ```powershell
-cd C:\Users\tlsfmswls\Desktop\Note\mcp-server
+cd mcp-server
 npm run http:install
 ```
 

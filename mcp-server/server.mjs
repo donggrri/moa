@@ -1162,27 +1162,37 @@ export async function handleHttpMcpRequest(request, options) {
     return { status: 403, headers: { "Content-Type": "application/json" }, body: { error: "origin not allowed" } };
   }
 
+  const corsHeaders = origin ? { "Access-Control-Allow-Origin": origin } : {};
+
   if (method === "GET" && url.pathname === "/health") {
-    return { status: 200, headers: { "Content-Type": "application/json" }, body: { ok: true } };
+    return { status: 200, headers: { "Content-Type": "application/json", ...corsHeaders }, body: { ok: true } };
   }
 
   if (url.pathname !== "/mcp") {
-    return { status: 404, headers: { "Content-Type": "application/json" }, body: { error: "not found" } };
+    return { status: 404, headers: { "Content-Type": "application/json", ...corsHeaders }, body: { error: "not found" } };
   }
 
   if (method === "OPTIONS") {
-    return { status: 204, headers: { "Access-Control-Allow-Headers": "Authorization, Content-Type, MCP-Protocol-Version" }, body: null };
+    return {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type, MCP-Protocol-Version",
+        ...corsHeaders
+      },
+      body: null
+    };
   }
 
   if (method !== "POST") {
-    return { status: 405, headers: { Allow: "POST, OPTIONS" }, body: { error: "method not allowed" } };
+    return { status: 405, headers: { Allow: "POST, OPTIONS", "Content-Type": "application/json", ...corsHeaders }, body: { error: "method not allowed" } };
   }
 
   const userId = resolveBearerUserId(headerValue(request.headers, "authorization"), options.tokenMap);
   if (!userId) {
     return {
       status: 401,
-      headers: { "Content-Type": "application/json", "WWW-Authenticate": "Bearer" },
+      headers: { "Content-Type": "application/json", "WWW-Authenticate": "Bearer", ...corsHeaders },
       body: { error: "unauthorized" }
     };
   }
@@ -1193,7 +1203,7 @@ export async function handleHttpMcpRequest(request, options) {
   } catch {
     return {
       status: 400,
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...corsHeaders },
       body: { jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error." } }
     };
   }
@@ -1202,9 +1212,9 @@ export async function handleHttpMcpRequest(request, options) {
   const response = await handleMessage(message, operations);
   const body = jsonRpcHttpBody(response);
   if (body === null) {
-    return { status: 202, headers: {}, body: null };
+    return { status: 202, headers: { ...corsHeaders }, body: null };
   }
-  return { status: 200, headers: { "Content-Type": "application/json" }, body };
+  return { status: 200, headers: { "Content-Type": "application/json", ...corsHeaders }, body };
 }
 
 class HttpBodyTooLargeError extends Error {
@@ -1276,13 +1286,17 @@ export function startHttpServer(options) {
       }
       outgoing.end(typeof result.body === "string" ? result.body : JSON.stringify(result.body));
     } catch (error) {
+      const origin = headerValue(incoming.headers, "origin");
+      const cors = origin && originAllowed(origin, options.allowedOrigins || [])
+        ? { "Access-Control-Allow-Origin": origin }
+        : {};
       if (error && error.code === "HTTP_BODY_TOO_LARGE") {
-        outgoing.writeHead(413, { "Content-Type": "application/json" });
+        outgoing.writeHead(413, { "Content-Type": "application/json", ...cors });
         outgoing.end(JSON.stringify({ error: "request body too large" }));
         return;
       }
       logError(error);
-      outgoing.writeHead(500, { "Content-Type": "application/json" });
+      outgoing.writeHead(500, { "Content-Type": "application/json", ...cors });
       outgoing.end(JSON.stringify({ error: "internal error" }));
     }
   });

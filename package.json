@@ -4,6 +4,9 @@
   "type": "module",
   "scripts": {
     "test": "node --test tests/mcp/server.test.mjs",
-    "test:release": "node --test tests/release/mcp-http.live.test.mjs"
+    "test:release": "node tests/release/run.mjs --strict",
+    "test:release:strict": "node tests/release/run.mjs --strict",
+    "test:release:smoke": "node tests/release/run.mjs --smoke",
+    "test:smoke": "node tests/release/run.mjs --smoke"
   }
 }

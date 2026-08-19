@@ -2,12 +2,16 @@
 
 대상: 이 PC가 서버, Cursor가 클라이언트. `127.0.0.1:8787`.
 
-자동: 저장소 루트에서 `npm test`. 서버가 떠 있으면 `npm run test:release`.
+자동:
+- 단위·계약 검증: 저장소 루트에서 `npm test`
+- 실서버 필수 검증 (Strict 모드, 미가동 시 실패): 서버 가동 후 `npm run test:release`
+- 개발 중 임의 스모크 점검 (Smoke 모드, 미가동 시 skip): `npm run test:smoke`
 
 ## 필수 (로컬 서버)
 
 - [ ] `mcp-server/.env`가 있고 Git에 없음
-- [ ] `npm run http:start` 또는 로그온 작업 후 `http://127.0.0.1:8787/health`가 `{"ok":true}`
+- [ ] 저장소 루트에서 `npm --prefix mcp-server run http:start` 또는 로그온 작업 후 `http://127.0.0.1:8787/health`가 `{"ok":true}`
+- [ ] `npm run test:release` (Strict 모드) 통과
 - [ ] Bearer 없이 `POST /mcp` → 401
 - [ ] Cursor MCP `moa`가 `http://127.0.0.1:8787/mcp` (STDIO `command`가 아님)
 - [ ] Cursor를 재시작한 뒤 `list_spaces`가 내 공간만 반환

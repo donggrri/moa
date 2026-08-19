@@ -81,8 +81,14 @@ Cursor는 `http://127.0.0.1:8787/mcp` + Bearer만 사용합니다. `service_role
 ## 테스트
 
 ```powershell
+# 1. 오프라인 단위·계약 테스트
 npm test
+
+# 2. 실서버 필수 릴리즈 테스트 (Strict 모드: 서버 미가동 시 실패)
 npm run test:release
+
+# 3. 로컬 개발용 스모크 테스트 (Smoke 모드: 서버 미가동 시 skip)
+npm run test:smoke
 ```
 
 릴리즈 전에 사람이 하는 항목은 [`tests/release/`](tests/release/)와 [`docs/RELEASE.md`](docs/RELEASE.md)입니다.

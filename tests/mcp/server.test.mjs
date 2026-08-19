@@ -19,6 +19,7 @@ import {
   startHttpServer,
   startStdioServer
 } from "../../mcp-server/server.mjs";
+import { isStrictMode } from "../release/helpers.mjs";
 
 const userId = "11111111-1111-4111-8111-111111111111";
 const spaceId = "22222222-2222-4222-8222-222222222222";
@@ -1126,4 +1127,234 @@ test("startHttpServer rejects oversized POST bodies with 413 and remains healthy
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
+});
+
+test("CORS headers are consistently returned on preflight, actual success, and error responses", async () => {
+  const tokenMap = parseMcpTokens(`local-http-token-value:${userId}`);
+  const options = {
+    tokenMap,
+    allowedOrigins: ["https://allowed.example"],
+    createOperations: () => createMoaOperations({ db: createRichDb().db, userId })
+  };
+
+  // Preflight with allowed origin
+  const preflightAllowed = await handleHttpMcpRequest({
+    method: "OPTIONS",
+    url: "/mcp",
+    headers: { origin: "https://allowed.example" }
+  }, options);
+  assert.equal(preflightAllowed.status, 204);
+  assert.equal(preflightAllowed.headers["Access-Control-Allow-Origin"], "https://allowed.example");
+  assert.equal(preflightAllowed.headers["Access-Control-Allow-Methods"], "POST, OPTIONS");
+  assert.match(preflightAllowed.headers["Access-Control-Allow-Headers"], /Authorization/);
+  assert.match(preflightAllowed.headers["Access-Control-Allow-Headers"], /Content-Type/);
+  assert.match(preflightAllowed.headers["Access-Control-Allow-Headers"], /MCP-Protocol-Version/);
+
+  // Preflight with rejected origin
+  const preflightRejected = await handleHttpMcpRequest({
+    method: "OPTIONS",
+    url: "/mcp",
+    headers: { origin: "https://evil.example" }
+  }, options);
+  assert.equal(preflightRejected.status, 403);
+  assert.equal(preflightRejected.headers["Access-Control-Allow-Origin"], undefined);
+  assert.deepEqual(preflightRejected.body, { error: "origin not allowed" });
+
+  // Preflight without origin header
+  const preflightNoOrigin = await handleHttpMcpRequest({
+    method: "OPTIONS",
+    url: "/mcp",
+    headers: {}
+  }, options);
+  assert.equal(preflightNoOrigin.status, 204);
+  assert.equal(preflightNoOrigin.headers["Access-Control-Allow-Origin"], undefined);
+  assert.equal(preflightNoOrigin.headers["Access-Control-Allow-Methods"], "POST, OPTIONS");
+
+  // Actual successful response (200) with allowed origin
+  const postSuccess = await handleHttpMcpRequest({
+    method: "POST",
+    url: "/mcp",
+    headers: { authorization: "Bearer local-http-token-value", origin: "https://allowed.example" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 10, method: "tools/list" })
+  }, options);
+  assert.equal(postSuccess.status, 200);
+  assert.equal(postSuccess.headers["Access-Control-Allow-Origin"], "https://allowed.example");
+
+  // Notification (202) with allowed origin
+  const notificationSuccess = await handleHttpMcpRequest({
+    method: "POST",
+    url: "/mcp",
+    headers: { authorization: "Bearer local-http-token-value", origin: "https://allowed.example" },
+    body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })
+  }, options);
+  assert.equal(notificationSuccess.status, 202);
+  assert.equal(notificationSuccess.headers["Access-Control-Allow-Origin"], "https://allowed.example");
+
+  // Unauthorized (401) with allowed origin
+  const unauthorized = await handleHttpMcpRequest({
+    method: "POST",
+    url: "/mcp",
+    headers: { origin: "https://allowed.example" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 11, method: "tools/list" })
+  }, options);
+  assert.equal(unauthorized.status, 401);
+  assert.equal(unauthorized.headers["Access-Control-Allow-Origin"], "https://allowed.example");
+  assert.equal(unauthorized.headers["WWW-Authenticate"], "Bearer");
+
+  // Bad JSON parse error (400) with allowed origin
+  const badParse = await handleHttpMcpRequest({
+    method: "POST",
+    url: "/mcp",
+    headers: { authorization: "Bearer local-http-token-value", origin: "https://allowed.example" },
+    body: "{malformed-json"
+  }, options);
+  assert.equal(badParse.status, 400);
+  assert.equal(badParse.headers["Access-Control-Allow-Origin"], "https://allowed.example");
+
+  // Method not allowed (405) with allowed origin
+  const methodNotAllowed = await handleHttpMcpRequest({
+    method: "PUT",
+    url: "/mcp",
+    headers: { origin: "https://allowed.example" }
+  }, options);
+  assert.equal(methodNotAllowed.status, 405);
+  assert.equal(methodNotAllowed.headers["Access-Control-Allow-Origin"], "https://allowed.example");
+  assert.equal(methodNotAllowed.headers.Allow, "POST, OPTIONS");
+
+  // Not found (404) with allowed origin
+  const notFound = await handleHttpMcpRequest({
+    method: "GET",
+    url: "/unknown-path",
+    headers: { origin: "https://allowed.example" }
+  }, options);
+  assert.equal(notFound.status, 404);
+  assert.equal(notFound.headers["Access-Control-Allow-Origin"], "https://allowed.example");
+
+  // Health endpoint (200) with allowed origin
+  const healthAllowed = await handleHttpMcpRequest({
+    method: "GET",
+    url: "/health",
+    headers: { origin: "https://allowed.example" }
+  }, options);
+  assert.equal(healthAllowed.status, 200);
+  assert.equal(healthAllowed.headers["Access-Control-Allow-Origin"], "https://allowed.example");
+
+  // Rejected origin on POST /mcp
+  const postRejected = await handleHttpMcpRequest({
+    method: "POST",
+    url: "/mcp",
+    headers: { authorization: "Bearer local-http-token-value", origin: "https://untrusted.example" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 12, method: "tools/list" })
+  }, options);
+  assert.equal(postRejected.status, 403);
+  assert.equal(postRejected.headers["Access-Control-Allow-Origin"], undefined);
+
+  // Rejected origin on GET /health
+  const healthRejected = await handleHttpMcpRequest({
+    method: "GET",
+    url: "/health",
+    headers: { origin: "https://untrusted.example" }
+  }, options);
+  assert.equal(healthRejected.status, 403);
+  assert.equal(healthRejected.headers["Access-Control-Allow-Origin"], undefined);
+});
+
+test("startHttpServer live socket handles CORS preflight, actual responses, errors, and rejected origins", async () => {
+  const tokenMap = parseMcpTokens(`socket-test-token-1234:${userId}`);
+  const server = startHttpServer({
+    host: "127.0.0.1",
+    port: 0,
+    maxBodyBytes: 64,
+    tokenMap,
+    allowedOrigins: ["https://web.moa.local"],
+    createOperations: () => createMoaOperations({ db: createRichDb().db, userId })
+  });
+
+  try {
+    await new Promise((resolve, reject) => {
+      server.once("listening", resolve);
+      server.once("error", reject);
+    });
+    const { port } = server.address();
+
+    // Preflight OPTIONS from allowed origin
+    const preflightRes = await fetch(`http://127.0.0.1:${port}/mcp`, {
+      method: "OPTIONS",
+      headers: { Origin: "https://web.moa.local" }
+    });
+    assert.equal(preflightRes.status, 204);
+    assert.equal(preflightRes.headers.get("access-control-allow-origin"), "https://web.moa.local");
+    assert.equal(preflightRes.headers.get("access-control-allow-methods"), "POST, OPTIONS");
+    assert.ok(preflightRes.headers.get("access-control-allow-headers").includes("Authorization"));
+
+    // POST /mcp from allowed origin with valid token (body is ~39 bytes < 64)
+    const postRes = await fetch(`http://127.0.0.1:${port}/mcp`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer socket-test-token-1234",
+        Origin: "https://web.moa.local"
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" })
+    });
+    assert.equal(postRes.status, 200);
+    assert.equal(postRes.headers.get("access-control-allow-origin"), "https://web.moa.local");
+    const postBody = await postRes.json();
+    assert.deepEqual(postBody.result, {});
+
+    // POST /mcp from allowed origin with oversized body (100 bytes > 64 -> 413)
+    const oversizedRes = await fetch(`http://127.0.0.1:${port}/mcp`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: "https://web.moa.local"
+      },
+      body: "x".repeat(100)
+    });
+    assert.equal(oversizedRes.status, 413);
+    assert.equal(oversizedRes.headers.get("access-control-allow-origin"), "https://web.moa.local");
+
+    // POST /mcp from rejected origin (403)
+    const rejectedRes = await fetch(`http://127.0.0.1:${port}/mcp`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: "https://unauthorized.origin"
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "ping" })
+    });
+    assert.equal(rejectedRes.status, 403);
+    assert.equal(rejectedRes.headers.get("access-control-allow-origin"), null);
+
+    // GET /health from allowed origin
+    const healthRes = await fetch(`http://127.0.0.1:${port}/health`, {
+      headers: { Origin: "https://web.moa.local" }
+    });
+    assert.equal(healthRes.status, 200);
+    assert.equal(healthRes.headers.get("access-control-allow-origin"), "https://web.moa.local");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("isStrictMode properly parses CLI flags and environment variables for strict/smoke modes", () => {
+  // CLI flags take highest precedence
+  assert.equal(isStrictMode(["node", "test", "--strict"], { MOA_MCP_LIVE_MODE: "smoke" }), true);
+  assert.equal(isStrictMode(["node", "test", "--smoke"], { MOA_MCP_LIVE_MODE: "strict" }), false);
+
+  // MOA_MCP_LIVE_MODE env var
+  assert.equal(isStrictMode(["node", "test"], { MOA_MCP_LIVE_MODE: "smoke" }), false);
+  assert.equal(isStrictMode(["node", "test"], { MOA_MCP_LIVE_MODE: "strict" }), true);
+  assert.equal(isStrictMode(["node", "test"], { MOA_MCP_LIVE_MODE: "SMOKE" }), false);
+
+  // MOA_MCP_STRICT_LIVE / MOA_STRICT_LIVE env vars
+  assert.equal(isStrictMode(["node", "test"], { MOA_MCP_STRICT_LIVE: "true" }), true);
+  assert.equal(isStrictMode(["node", "test"], { MOA_MCP_STRICT_LIVE: "1" }), true);
+  assert.equal(isStrictMode(["node", "test"], { MOA_MCP_STRICT_LIVE: "false" }), false);
+  assert.equal(isStrictMode(["node", "test"], { MOA_MCP_STRICT_LIVE: "0" }), false);
+  assert.equal(isStrictMode(["node", "test"], { MOA_STRICT_LIVE: "true" }), true);
+  assert.equal(isStrictMode(["node", "test"], { MOA_STRICT_LIVE: "false" }), false);
+
+  // Default without any flag or env var is strict
+  assert.equal(isStrictMode(["node", "test"], {}), true);
 });
