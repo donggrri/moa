@@ -37,4 +37,4 @@ Cloud Agent VM은 이 서버를 호스팅하지 않는다. 클라이언트일 �
 
 ## 이 작업과 무관한 제품 다음 일
 
-두 계정 실사용, 오늘/지연 UX, 반복 수정 정책, 알림. 목록은 `PROJECT_PLAN.md`와 `FEATURES.md`의 `next`를 본다.
+두 계정 실사용, 반복 수정 정책, 알림. 목록은 `PROJECT_PLAN.md`와 `FEATURES.md`의 `next`를 본다.

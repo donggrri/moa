@@ -14,7 +14,7 @@
 ## 포함 파일
 
 - `server.mjs`: STDIO와 `POST /mcp` HTTP, Supabase REST/RPC 어댑터
-- 단위 테스트: 저장소 `tests/mcp/server.test.mjs` (`npm test`). 릴리즈 체크리스트는 `tests/release/`
+- 단위 테스트: 저장소 `tests/mcp/server.test.mjs` (`npm test`). mutation은 저장소 루트 `npx stryker run --mutate mcp-server/server.mjs`. 릴리즈 체크리스트는 `tests/release/`
 - `.env.example`: 로컬 비밀 값 템플릿. 실제 값은 `.env`에만 둡니다
 - `package.json`: Node.js 실행 스크립트와 엔진 조건
 - `scripts/start-http.ps1`: 이 PC에서 HTTP 서버가 꺼져 있으면 시작
@@ -131,7 +131,7 @@ PC 대신 파이가 서버가 되면 Cursor URL만 바꿉니다. 서버 코드�
 | 도구 | 입력 | 동작 |
 | --- | --- | --- |
 | `list_spaces` | 없음 | 현재 사용자가 membership을 가진 공간만 조회 |
-| `get_today_tasks` | `space_id` | 해당 공간의 로컬 프로세스 기준 오늘 할일 조회 |
+| `get_today_tasks` | `space_id` | 해당 공간의 로컬 프로세스 기준 당일 마감 할일 조회. 지연 할일은 `list_tasks` |
 | `list_tasks` | `space_id`, 선택적 `due_date`, `status` | 할일 목록 조회. `status`는 `open` 또는 `done` |
 | `add_task` | `space_id`, `title`, `due_date`, 선택적 시간·담당자·분류·메모·`recurrence` | 할일 추가 |
 | `complete_task` | `space_id`, `task_id` | 할일 완료 및 반복 다음 회차 생성 |

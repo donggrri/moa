@@ -11,11 +11,13 @@
 | ID | 기능 | 반영 위치 | 테스트 | 비고 |
 |---|---|---|---|---|
 | WEB-AUTH | 이메일 로그인·회원가입·비밀번호 재설정 | `app.js`, `index.html`, Supabase Auth | `tests/release/web-app.md` | Confirm email은 로컬에서 끌 수 있음 |
+| WEB-AUTH-KAKAO | 카카오 로그인 | `app.js`, `auth-flow.js`, Supabase Kakao provider | `tests/web/auth-flow.test.mjs`, `tests/release/web-app.md` | 인가 코드 교환은 Supabase. Kakao Developers·Provider 설정 필요. 이메일은 비즈앱 `account_email` |
 | WEB-SPACE | 공동 공간 생성·초대 코드·링크 참여 | `join_space` RPC, 화면 | `tests/release/web-app.md` | 두 계정 실기기 검증은 미완 |
 | WEB-TASK | 할일 CRUD, 담당자, 완료, 연기, 반복 | tasks RPC, Realtime | `tests/release/web-app.md` | 동시 완료 실기기 검증은 미완 |
 | WEB-IDEA | 아이디어 저장·보관·할일 전환 | ideas, `convert_idea_to_task` | `tests/release/web-app.md` | |
 | WEB-PAGES | GitHub Pages 배포 + publishable key | Pages, `supabase-config.js` | `tests/release/web-app.md` | 회사 PC는 웹만 Pages URL |
-| TASK-OVERDUE | 지난 할일 삭제하지 않음 | 도메인, 오늘/전체 화면 | `tests/release/web-app.md` | 오늘 화면에서 빠지고 전체에서 지연 |
+| TASK-OVERDUE | 지난 할일 삭제하지 않음 | 도메인, 오늘/전체 화면 | `tests/release/web-app.md` | 완료·연기 전까지 미완료로 남음 |
+| WEB-OVERDUE-UX | 오늘 화면에 지연 할일 표시 | `task-visibility.js`, `app.js` | `tests/web/task-visibility.test.mjs`, `tests/release/web-app.md` | 당일+미완료 지연. 지난 완료·미래 할일은 제외 |
 | MCP-TOOLS | 공간·할일·아이디어 MCP 도구 | `mcp-server/server.mjs` | `tests/mcp/server.test.mjs` | 임의 SQL 없음 |
 | MCP-HTTP | HTTP `POST /mcp`, Bearer, Origin 검사 | `server.mjs --http` | `tests/mcp/server.test.mjs`, `tests/release/mcp-http.md` | `127.0.0.1`만. 인터넷 직접 공개 안 함 |
 | MCP-PC-SERVER | PC가 서버, Cursor가 HTTP 클라이언트 | `.cursor/mcp.json`, `scripts/*.ps1` | `tests/release/mcp-http.md` | PC가 꺼지면 서버도 멈춤. `.env` 실값은 로컬만 |
@@ -33,7 +35,6 @@
 | MCP-PI | 라즈베리파이에 같은 HTTP 서버 + systemd | MCP-PC-RUN 확인 후 | `CONTINUE.md`, `mcp-server/scripts/moa-mcp-http.service` |
 | MCP-TUNNEL | Cloudflare Tunnel로 회사 PC Cursor 연결 | MCP-PI | `CONTINUE.md` |
 | WEB-TWO-USER | 두 계정 초대·동시 완료 실기기 검증 | WEB-SPACE, WEB-TASK | `tests/release/web-app.md` |
-| WEB-OVERDUE-UX | 오늘 화면에 지연 할일 표시 여부 | TASK-OVERDUE | `PROJECT_PLAN.md` |
 | WEB-RECURRENCE-POLICY | 반복 수정 이번/이후/과거 보존 | WEB-TASK | `PROJECT_PLAN.md` |
 | NOTIFY | Reminder·웹 푸시 | 실사용 검증 후 | Phase 4 |
 | KAKAO | 카카오 공유·메시지 | NOTIFY 이후 | Phase 4 |

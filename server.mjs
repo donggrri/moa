@@ -4,7 +4,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)));
-const port = 5173;
+const host = process.env.MOA_WEB_HOST || '127.0.0.1';
+const port = Number.parseInt(process.env.MOA_WEB_PORT || '5173', 10);
 const contentTypes = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -35,6 +36,8 @@ const server = http.createServer((request, response) => {
   });
 });
 
-server.listen(port, '127.0.0.1', () => {
-  console.log('모아 MVP: http://127.0.0.1:' + port);
+server.listen(port, host, () => {
+  const address = server.address();
+  const actualPort = address && typeof address === 'object' ? address.port : port;
+  console.log('MOA MVP: http://' + host + ':' + actualPort);
 });

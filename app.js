@@ -1,3 +1,20 @@
+import {
+  isOverdueTask,
+  countTodayOpen,
+  summarizeTodayView
+} from './task-visibility.js';
+import {
+  isInviteCode,
+  readInviteFromLocation,
+  oauthRedirectUrl,
+  parseOAuthCallbackError,
+  stripOAuthCallbackErrorParams,
+  displayNameFromUser,
+  persistInviteCode,
+  readPersistedInviteCode,
+  clearPersistedInviteCode
+} from './auth-flow.js';
+
 (function () {
   'use strict';
 
@@ -10,7 +27,7 @@
   var authClient = null;
   var realtimeUnsubscribe = null;
   var realtimeRefreshTimer = null;
-  var pendingInviteCode = getInviteFromUrl();
+  var pendingInviteCode = rememberInvite(readInviteFromLocation(window.location.href) || readPersistedInviteCode(window.sessionStorage));
   var authMode = 'signin';
   var sessionBooting = false;
   var state = {
@@ -94,31 +111,15 @@
       .replace(/'/g, '&#039;');
   }
 
-  function isInviteCode(value) {
-    return /^[A-Z0-9]{12}$/i.test(String(value || '').trim());
+  function rememberInvite(code) {
+    if (!isInviteCode(code)) return '';
+    return persistInviteCode(window.sessionStorage, code);
   }
 
-  function getInviteFromUrl() {
-    try {
-      var params = new URL(window.location.href).searchParams;
-      var invite = params.get('invite') || '';
-      var code = params.get('code') || '';
-      if (isInviteCode(invite)) return invite.trim().toUpperCase();
-      if (isInviteCode(code)) return code.trim().toUpperCase();
-      return '';
-    } catch (error) {
-      return '';
-    }
-  }
-
-  function hasAuthCallbackParams() {
-    try {
-      var url = new URL(window.location.href);
-      var code = url.searchParams.get('code') || '';
-      return Boolean((code && !isInviteCode(code)) || url.hash.indexOf('access_token') !== -1);
-    } catch (error) {
-      return false;
-    }
+  function forgetInvite() {
+    pendingInviteCode = '';
+    clearPersistedInviteCode(window.sessionStorage);
+    clearInviteFromUrl();
   }
 
   function appUrl() {
@@ -161,15 +162,28 @@
     ].join('');
   }
 
+  function kakaoMark() {
+    return '<svg class="kakao-mark" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="#191919" d="M12 4C6.92 4 2.8 7.24 2.8 11.22c0 2.54 1.7 4.77 4.27 6.07-.14.52-.9 3.27-.93 3.47 0 0-.02.17.09.23.11.07.24 0 .24 0 .32-.04 3.63-2.39 4.21-2.79.43.06.86.09 1.32.09 5.08 0 9.2-3.24 9.2-7.22S17.08 4 12 4z"/></svg>';
+  }
+
   function authModeMarkup(message) {
     var isSignup = authMode === 'signup';
     var isReset = authMode === 'reset';
     var title = isSignup ? '모아 시작하기' : (isReset ? '비밀번호 재설정' : '다시 만나요');
-    var description = isSignup ? '이메일로 계정을 만들고 공동 공간을 시작해요.' : (isReset ? '가입한 이메일로 재설정 링크를 보내드려요.' : '공동 공간에 로그인하면 어디서든 이어서 사용할 수 있어요.');
+    var description = isSignup
+      ? '카카오 또는 이메일로 계정을 만들고 공동 공간을 시작해요.'
+      : (isReset ? '가입한 이메일로 재설정 링크를 보내드려요.' : '카카오 또는 이메일로 로그인하면 어디서든 이어서 사용할 수 있어요.');
     var inviteNotice = pendingInviteCode ? '<div class="auth-invite-note">초대 링크로 들어왔어요. 로그인하면 공동 공간에 참여할 수 있어요.</div>' : '';
     var nameField = isSignup ? '<label class="auth-field"><span>이름</span><input name="displayName" autocomplete="name" maxlength="40" placeholder="예: 서연" required /></label>' : '';
     var passwordField = isReset ? '' : '<label class="auth-field"><span>비밀번호</span><input name="password" type="password" autocomplete="' + (isSignup ? 'new-password' : 'current-password') + '" minlength="6" placeholder="6자 이상" required /></label>';
     var submit = isSignup ? '회원가입' : (isReset ? '재설정 링크 보내기' : '로그인');
+    var kakaoButton = isReset ? '' : [
+      '<button class="button kakao" data-action="kakao-login" type="button">',
+      kakaoMark(),
+      '<span>카카오 로그인</span>',
+      '</button>',
+      '<div class="auth-divider"><span>또는 이메일로</span></div>'
+    ].join('');
     return [
       '<div class="auth-brand"><span class="brand-mark">M</span><div><strong>모아</strong><span>함께 쓰는 생활 공간</span></div></div>',
       '<p class="auth-kicker">MOA SHARED SPACE</p>',
@@ -177,6 +191,7 @@
       '<p class="auth-description">' + description + '</p>',
       inviteNotice,
       message ? '<div class="auth-message">' + escapeHtml(message) + '</div>' : '',
+      kakaoButton,
       '<form class="auth-form" id="authForm" data-auth-mode="' + authMode + '">',
       nameField,
       '<label class="auth-field"><span>이메일</span><input name="email" type="email" autocomplete="email" placeholder="you@example.com" required /></label>',
@@ -197,10 +212,10 @@
   }
 
   function setAuthBusy(isBusy) {
-    var form = document.getElementById('authForm');
-    if (!form) return;
-    form.classList.toggle('is-busy', isBusy);
-    form.querySelectorAll('input, button').forEach(function (element) { element.disabled = isBusy; });
+    var panel = document.getElementById('authContent');
+    if (!panel) return;
+    panel.classList.toggle('is-busy', isBusy);
+    panel.querySelectorAll('input, button').forEach(function (element) { element.disabled = isBusy; });
   }
 
   function errorMessage(error, fallback) {
@@ -208,7 +223,40 @@
     if (/invalid login credentials/i.test(message)) return '이메일 또는 비밀번호를 확인해주세요.';
     if (/email not confirmed/i.test(message)) return '이메일 인증을 완료한 뒤 로그인해주세요.';
     if (/already registered|already exists/i.test(message)) return '이미 가입된 이메일이에요. 로그인해주세요.';
+    if (/provider is not enabled|unsupported provider/i.test(message)) return '카카오 로그인이 아직 연결되지 않았어요. 이메일로 로그인해주세요.';
+    if (/koe205|account_email/i.test(message)) return '카카오 로그인 설정이 아직 끝나지 않았어요. 이메일로 로그인해주세요.';
+    if (/unable to exchange external code|error exchanging oauth|unexpected_failure/i.test(message)) return '카카오 로그인에 실패했어요. 다시 시도해주세요.';
+    if (/access_denied|user cancelled|user canceled/i.test(message)) return '카카오 로그인을 취소했어요.';
     return message || fallback || '요청을 처리하지 못했어요. 잠시 후 다시 시도해주세요.';
+  }
+
+  function consumeAuthCallbackError() {
+    var parsed = parseOAuthCallbackError(window.location.href);
+    if (!parsed) return '';
+    try {
+      window.history.replaceState({}, document.title, stripOAuthCallbackErrorParams(window.location.href));
+    } catch (error) {
+      /* file:// 환경에서는 주소를 바꾸지 않습니다. */
+    }
+    return errorMessage({ message: parsed.description || parsed.error }, '카카오 로그인에 실패했어요.');
+  }
+
+  async function handleKakaoLogin() {
+    if (!authClient) return;
+    rememberInvite(pendingInviteCode);
+    setAuthBusy(true);
+    try {
+      var result = await authClient.auth.signInWithOAuth({
+        provider: 'kakao',
+        options: {
+          redirectTo: oauthRedirectUrl(appUrl(), pendingInviteCode)
+        }
+      });
+      if (result.error) throw result.error;
+    } catch (error) {
+      renderAuth(errorMessage(error, '카카오 로그인에 실패했어요.'));
+      setAuthBusy(false);
+    }
   }
 
   async function handleAuthSubmit(form) {
@@ -340,6 +388,7 @@
 
   function createSeedState() {
     var today = todayIso();
+    var yesterday = addDays(today, -1);
     var tomorrow = addDays(today, 1);
     var inTwoDays = addDays(today, 2);
     var inFiveDays = addDays(today, 5);
@@ -400,6 +449,18 @@
     ];
 
     var tasks = [
+      {
+        id: 'task-trash-overdue',
+        title: '음식물 쓰레기 버리기',
+        dueDate: yesterday,
+        dueTime: '21:00',
+        assigneeId: 'user-junho',
+        category: '집안일',
+        note: '',
+        status: 'open',
+        recurringId: null,
+        createdAt: yesterday
+      },
       {
         id: 'task-recycle-today',
         title: '분리수거 내놓기',
@@ -555,8 +616,7 @@
       : null;
     if (member) return member;
     var profile = state.currentUserProfile || {};
-    var metadata = profile.user_metadata || {};
-    var name = metadata.display_name || metadata.name || (profile.email ? profile.email.split('@')[0] : '나');
+    var name = displayNameFromUser(profile);
     return {
       id: state.currentUserId,
       name: name,
@@ -592,6 +652,11 @@
     var currentUserId = state.currentUserId;
     if (taskFilter === 'open') return tasks.filter(function (task) { return task.status !== 'done'; });
     if (taskFilter === 'done') return tasks.filter(function (task) { return task.status === 'done'; });
+    if (taskFilter === 'overdue') {
+      return tasks.filter(function (task) {
+        return isOverdueTask(task, todayIso());
+      });
+    }
     if (taskFilter === 'mine') return tasks.filter(function (task) { return task.assigneeId === currentUserId; });
     if (taskFilter === 'partner') return tasks.filter(function (task) { return task.assigneeId !== currentUserId; });
     return tasks;
@@ -626,7 +691,7 @@
   function taskDueMarkup(task) {
     var dateText = relativeDate(task.dueDate);
     var timeText = task.dueTime ? ' · ' + escapeHtml(task.dueTime) : '';
-    var isLate = task.status !== 'done' && task.dueDate < todayIso();
+    var isLate = isOverdueTask(task, todayIso());
     if (isLate) return '<span class=\"late\">' + dateText + timeText + '</span>';
     return '<span>' + dateText + timeText + '</span>';
   }
@@ -634,18 +699,22 @@
   function taskRow(task, space) {
     var member = getMember(space, task.assigneeId);
     var recurring = getRecurring(space, task.recurringId);
+    var isLate = isOverdueTask(task, todayIso());
     var doneClass = task.status === 'done' ? ' done' : '';
     var checkedClass = task.status === 'done' ? ' completed' : '';
+    var overdueClass = isLate ? ' overdue' : '';
     var repeatMark = recurring ? '<span title=\"반복 일정\">' + icon('repeat', 11) + '</span>' : '';
+    var overdueMark = isLate ? '<span class=\"task-chip overdue\">지연</span>' : '';
 
     return [
-      '<article class=\"task-row\">',
+      '<article class=\"task-row' + overdueClass + '\">',
       '<button class=\"task-check' + checkedClass + '\" data-action=\"toggle-task\" data-task-id=\"' + escapeHtml(task.id) + '\" type=\"button\" aria-label=\"' + (task.status === 'done' ? '완료 취소' : '완료 처리') + '\">',
       task.status === 'done' ? icon('check', 13) : '',
       '</button>',
       '<div class=\"task-main\">',
       '<div class=\"task-title-line\">',
       '<span class=\"task-title' + doneClass + '\">' + escapeHtml(task.title) + '</span>',
+      overdueMark,
       repeatMark,
       '</div>',
       '<div class=\"task-meta\">',
@@ -731,6 +800,7 @@
     var filters = [
       { id: 'all', label: '전체' },
       { id: 'open', label: '남은 일' },
+      { id: 'overdue', label: '지연' },
       { id: 'mine', label: '내 담당' },
       { id: 'partner', label: '파트너 담당' },
       { id: 'done', label: '완료' }
@@ -767,13 +837,23 @@
   }
 
   function renderToday(space) {
-    var todayTasks = space.tasks.filter(function (task) { return task.dueDate === todayIso(); });
-    var visibleTasks = applyTaskFilter(todayTasks);
-    var completed = todayTasks.filter(function (task) { return task.status === 'done'; }).length;
-    var openCount = todayTasks.length - completed;
-    var percent = todayTasks.length ? Math.round((completed / todayTasks.length) * 100) : 0;
+    var summary = summarizeTodayView(space.tasks, todayIso());
+    var visibleTasks = applyTaskFilter(summary.visible);
+    var completed = summary.completed;
+    var openCount = summary.openCount;
+    var percent = summary.percent;
+    var overdueCount = summary.overdue.length;
     var activeRecurring = space.recurring.filter(function (item) { return item.active; }).length;
     var currentUser = getCurrentUser();
+    var remainCopy = openCount
+      ? ('오늘은 ' + openCount + '개의 할일이 남아 있어요.' + (overdueCount ? ' 그중 ' + overdueCount + '개는 지연이에요.' : ''))
+      : '오늘 할 일을 모두 마쳤어요.';
+    var remainNote = openCount
+      ? (overdueCount ? '지난 할일부터 이어서 해봐요' : '천천히 하나씩 해봐요')
+      : '오늘 할 일을 모두 마쳤어요';
+    var todaySubtitle = overdueCount
+      ? ('지난 할일 ' + overdueCount + '개를 포함해 함께 확인해요.')
+      : '함께 확인하고, 끝난 일은 가볍게 체크해요.';
 
     return [
       '<section class=\"page-header\">',
@@ -786,27 +866,27 @@
       '<div class=\"hero-copy\">',
       '<p class=\"page-kicker\">GOOD MORNING, ' + escapeHtml(currentUser.name.toUpperCase()) + '</p>',
       '<h2 class=\"hero-title\">작은 약속이<br />우리의 하루가 돼요.</h2>',
-      '<p class=\"hero-subtitle\">오늘은 ' + openCount + '개의 할일이 남아 있어요.</p>',
+      '<p class=\"hero-subtitle\">' + remainCopy + '</p>',
       '<div class=\"hero-meta\"><span>' + completed + '개 완료</span><span class=\"hero-meta-divider\"></span><span>반복 일정 ' + activeRecurring + '개</span></div>',
       '</div>',
       '<div class=\"hero-art\" aria-hidden=\"true\"><div class=\"art-sun\"></div><div class=\"art-roof\"></div><div class=\"art-house\"></div><div class=\"art-window\"></div><div class=\"art-door\"></div></div>',
       '</section>',
       '<section class=\"metric-grid\">',
-      '<article class=\"metric-card\"><div><div class=\"metric-label\">오늘 남은 할일</div><div class=\"metric-value\">' + openCount + '</div><div class=\"metric-note\">' + (openCount ? '천천히 하나씩 해봐요' : '오늘 할 일을 모두 마쳤어요') + '</div></div><div class=\"metric-icon green\">' + icon('check', 18) + '</div></article>',
+      '<article class=\"metric-card\"><div><div class=\"metric-label\">오늘 남은 할일</div><div class=\"metric-value\">' + openCount + '</div><div class=\"metric-note\">' + remainNote + '</div></div><div class=\"metric-icon green\">' + icon('check', 18) + '</div></article>',
       '<article class=\"metric-card\"><div><div class=\"metric-label\">오늘 완료율</div><div class=\"metric-value\">' + percent + '<small>%</small></div><div class=\"metric-note positive\">' + (percent >= 50 ? '좋은 리듬이에요' : '이제 시작해도 충분해요') + '</div></div><div class=\"metric-icon yellow\">' + icon('sun', 18) + '</div></article>',
       '<article class=\"metric-card\"><div><div class=\"metric-label\">활성 반복 일정</div><div class=\"metric-value\">' + activeRecurring + '</div><div class=\"metric-note\">매일의 흐름을 자동으로</div></div><div class=\"metric-icon lavender\">' + icon('repeat', 18) + '</div></article>',
       '</section>',
       '<section class=\"content-grid\">',
       '<div>',
       '<article class=\"panel\">',
-      '<div class=\"panel-head\"><div><h2 class=\"panel-title\">오늘 할일</h2><p class=\"panel-subtitle\">함께 확인하고, 끝난 일은 가볍게 체크해요.</p></div><button class=\"panel-action\" data-action=\"open-task-modal\" type=\"button\">추가 ' + icon('plus', 13) + '</button></div>',
+      '<div class=\"panel-head\"><div><h2 class=\"panel-title\">오늘 할일</h2><p class=\"panel-subtitle\">' + todaySubtitle + '</p></div><button class=\"panel-action\" data-action=\"open-task-modal\" type=\"button\">추가 ' + icon('plus', 13) + '</button></div>',
       filterMarkup(),
       taskListMarkup(visibleTasks, space),
       '</article>',
       '<article class=\"panel\"><div class=\"panel-head\"><div><h2 class=\"panel-title\">다가오는 할일</h2><p class=\"panel-subtitle\">이번 주에 예정된 일</p></div><button class=\"panel-action\" data-view=\"all\" type=\"button\">전체 보기 ' + icon('arrow', 13) + '</button></div>' + upcomingMarkup(space) + '</article>',
       '</div>',
       '<div>',
-      '<article class=\"panel progress-panel\"><div class=\"panel-head\"><div><h2 class=\"panel-title\">오늘의 리듬</h2><p class=\"panel-subtitle\">우리 공간의 작은 진행률</p></div><span class=\"progress-percent\">' + percent + '%</span></div><div class=\"progress-bar\"><div class=\"progress-fill\" style=\"width:' + percent + '%\"></div></div><div class=\"stat-row\"><span>완료한 할일</span><strong>' + completed + ' / ' + todayTasks.length + '</strong></div><div class=\"stat-row\"><span>가장 바쁜 사람</span><strong>' + busiestMember(space) + '</strong></div><div class=\"stat-row\"><span>다음 알림</span><strong>' + nextReminder(space) + '</strong></div></article>',
+      '<article class=\"panel progress-panel\"><div class=\"panel-head\"><div><h2 class=\"panel-title\">오늘의 리듬</h2><p class=\"panel-subtitle\">우리 공간의 작은 진행률</p></div><span class=\"progress-percent\">' + percent + '%</span></div><div class=\"progress-bar\"><div class=\"progress-fill\" style=\"width:' + percent + '%\"></div></div><div class=\"stat-row\"><span>완료한 할일</span><strong>' + completed + ' / ' + summary.total + '</strong></div><div class=\"stat-row\"><span>가장 바쁜 사람</span><strong>' + busiestMember(space) + '</strong></div><div class=\"stat-row\"><span>다음 알림</span><strong>' + nextReminder(space) + '</strong></div></article>',
       '<article class=\"panel\"><div class=\"panel-head\"><div><h2 class=\"panel-title\">우리 팀</h2><p class=\"panel-subtitle\">담당 일을 나눠서 보고 있어요.</p></div><button class=\"panel-action\" data-view=\"members\" type=\"button\">멤버 ' + icon('arrow', 13) + '</button></div>' + memberMiniMarkup(space) + '</article>',
       '</div>',
       '</section>'
@@ -825,7 +905,7 @@
   }
 
   function nextReminder(space) {
-    var next = sortTasks(space.tasks.filter(function (task) { return task.status !== 'done' && task.dueDate >= todayIso(); }))[0];
+    var next = sortTasks(space.tasks.filter(function (task) { return task.status !== 'done'; }))[0];
     return next ? relativeDate(next.dueDate) + (next.dueTime ? ' ' + next.dueTime : '') : '없음';
   }
 
@@ -962,7 +1042,7 @@
       return;
     }
     var currentUser = getCurrentUser();
-    var todayOpen = space.tasks.filter(function (task) { return task.dueDate === todayIso() && task.status !== 'done'; }).length;
+    var todayOpen = countTodayOpen(space.tasks, todayIso());
     var content = document.getElementById('appContent');
 
     document.getElementById('sidebarSpaceName').textContent = space.name;
@@ -1454,6 +1534,8 @@
       closeModal();
     } else if (action === 'reload-page') {
       window.location.reload();
+    } else if (action === 'kakao-login') {
+      handleKakaoLogin();
     } else if (action === 'logout') {
       logout();
     } else if (action === 'close-modal') {
@@ -1586,12 +1668,10 @@
         var inviteCode = pendingInviteCode;
         try {
           joinedSpace = await store.joinSpace(inviteCode);
-          pendingInviteCode = '';
-          clearInviteFromUrl();
+          forgetInvite();
         } catch (error) {
           inviteError = error;
-          pendingInviteCode = '';
-          clearInviteFromUrl();
+          forgetInvite();
         }
       }
       state = await store.loadState(joinedSpace ? joinedSpace.id : state.currentSpaceId);
@@ -1640,7 +1720,7 @@
     authClient.auth.onAuthStateChange(function (event, session) {
       window.setTimeout(function () {
         if (event === 'SIGNED_OUT' || !session) {
-          if (event === 'INITIAL_SESSION' && hasAuthCallbackParams()) return;
+          if (event === 'INITIAL_SESSION') return;
           clearRealtimeSubscription();
           state = emptyState();
           setAppVisible(false);
@@ -1652,6 +1732,7 @@
     });
 
     var sessionResult = await authClient.auth.getSession();
+    var oauthError = consumeAuthCallbackError();
     if (sessionResult.error) {
       renderAuth(errorMessage(sessionResult.error, '로그인 상태를 확인하지 못했어요.'));
       return;
@@ -1659,7 +1740,7 @@
     if (sessionResult.data && sessionResult.data.session) {
       await startAuthenticatedSession();
     } else {
-      renderAuth();
+      renderAuth(oauthError);
     }
   }
 

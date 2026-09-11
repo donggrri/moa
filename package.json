@@ -3,7 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test tests/mcp/server.test.mjs",
-    "test:release": "node --test tests/release/mcp-http.live.test.mjs"
+    "test": "node --test tests/mcp/server.test.mjs tests/web/task-visibility.test.mjs tests/web/auth-flow.test.mjs",
+    "test:web": "node --test tests/release/web-static.test.mjs",
+    "test:release": "node --test tests/release/mcp-http.live.test.mjs",
+    "test:mutate": "stryker run"
+  },
+  "devDependencies": {
+    "@stryker-mutator/core": "^10.0.0"
   }
 }
