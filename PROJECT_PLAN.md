@@ -1,9 +1,9 @@
 # 모아 프로젝트 진행 계획과 검토
 
 최초 작성: 2026-08-01  
-상태 갱신: 2026-08-17
+상태 갱신: 2026-09-11
 
-## 현재 진행 상태 (2026-08-17)
+## 현재 진행 상태 (2026-09-11)
 
 완료된 기능의 원본은 [`docs/FEATURES.md`](docs/FEATURES.md)다. 다음 세션 손 위치는 [`docs/CONTINUE.md`](docs/CONTINUE.md)다.
 
@@ -24,7 +24,7 @@
 추가로 반영된 것:
 
 - GitHub Pages에 publishable key 연결. 회사 PC는 Pages URL로 로그인하면 된다.
-- 로컬 MCP HTTP 서버(`mcp-server/`). 이 PC가 켜져 있을 때만 처리하고, Cursor는 `127.0.0.1:8787` 클라이언트다. 이후 서버는 라즈베리파이로 옮긴다. 실제 조회는 `mcp-server/.env`가 필요하다.
+- 로컬 MCP HTTP 서버(`mcp-server/`). 코드·계약 테스트는 있다. 이 PC가 켜져 있을 때만 처리하고, Cursor는 `127.0.0.1:8787` 클라이언트다. **실서버·클라이언트 조회는 나중에 테스트**한다(`.env`, `http:install`, `tests/release/mcp-http.md`). 이후 서버는 라즈베리파이로 옮긴다.
 - 날짜가 지난 할일은 **삭제되지 않는다**. 오늘 화면과 전체 할일에서 지연으로 보인다.
 
 ## 결론
@@ -315,7 +315,7 @@
 
 상세 손 위치는 [`docs/CONTINUE.md`](docs/CONTINUE.md)를 따른다.
 
-1. `mcp-server/.env`를 채운 뒤 `npm run http:install`로 이 PC 로그온 시 HTTP 서버를 띄우고, Cursor HTTP 클라이언트로 할일 조회·추가를 확인한다. 체크리스트는 `tests/release/mcp-http.md`. 라즈베리파이 이전은 그다음이다.
+1. **나중에:** MCP 실서버 테스트(`MCP-PC-RUN`). `mcp-server/.env`를 채운 뒤 `npm run http:install`로 이 PC 로그온 시 HTTP 서버를 띄우고, Cursor/Grok HTTP 클라이언트로 할일 조회를 확인한다. 체크리스트는 `tests/release/mcp-http.md`. 라즈베리파이 이전은 그 확인 다음이다.
 2. 두 브라우저에서 다른 계정으로 로그인·초대 참여·할일 완료·반복 동시 완료를 확인한다.
 3. 반복 규칙 수정 정책(“이번 회차만 / 앞으로 모든 회차 / 과거 완료 보존”)을 확정한다.
 4. 소유권 이전 UI를 넣을지 결정한다. DB는 마지막 owner 삭제를 이미 막는다.

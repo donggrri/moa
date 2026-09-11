@@ -64,16 +64,19 @@ npm run test:mutate
 4. 테스트 성공 후에만 Pages artifact를 만들고 배포한다.
 5. 배포 URL은 Actions의 `github-pages` Environment에서 확인한다.
 
-웹 사용자 확인은 [`../tests/release/web-app.md`](../tests/release/web-app.md)를 따른다. 로그인·Supabase 데이터·두 사용자 Realtime 동작은 운영 계정과 외부 서비스가 필요하므로 자동 게이트와 별도의 운영 확인으로 남긴다.
+웹 사용자 확인은 [`../tests/release/web-app.md`](../tests/release/web-app.md)를 따른다. 카카오 실로그인은 [`../tests/release/web-kakao.md`](../tests/release/web-kakao.md)다. 로그인·Supabase 데이터·카카오 동의·두 사용자 Realtime 동작은 운영 계정과 외부 서비스가 필요하므로 자동 게이트와 별도의 운영 확인으로 남긴다. 자동/수동 경계는 [`../tests/README.md`](../tests/README.md)다.
 
 ## MCP PC 릴리즈
 
-Pages 배포와 독립적으로 다음을 수행한다.
+Pages 배포와 독립이다. **실서버·클라이언트 조회는 나중에 테스트**한다(`FEATURES.md` `MCP-PC-RUN`). 계약 테스트(`npm test`)만으로 Pages 게이트를 막지 않는다.
+
+나중에 수행할 때:
 
 1. `mcp-server/.env`는 로컬에만 둔다.
 2. `npm run http:start` 또는 로그온 작업으로 서버를 실행한다.
 3. [`../tests/release/mcp-http.md`](../tests/release/mcp-http.md)의 필수 항목을 확인한다.
-4. Cursor 재시작 후 `list_spaces`와 `list_tasks`를 호출한다.
+4. Cursor/Grok 재시작 후 `list_spaces`와 `list_tasks`를 호출한다.
+5. 통과하면 `MCP-PC-RUN`을 `shipped`로 옮긴다.
 
 ## 실패와 롤백
 
@@ -87,5 +90,5 @@ Pages 배포와 독립적으로 다음을 수행한다.
 - `Release / Test gate` 성공
 - 필수 테스트에 skip 없음
 - `main` 보호 규칙과 Pages Source가 위 설정을 따름
-- 필요한 경우 [`../tests/release/web-app.md`](../tests/release/web-app.md)와 [`../tests/release/mcp-http.md`](../tests/release/mcp-http.md)의 운영 확인 완료
+- 필요한 경우 [`../tests/release/web-app.md`](../tests/release/web-app.md), [`../tests/release/web-kakao.md`](../tests/release/web-kakao.md), [`../tests/release/mcp-http.md`](../tests/release/mcp-http.md)의 운영 확인 완료
 - `docs/FEATURES.md`의 기능 상태가 `shipped` 또는 명시적인 `in_progress`

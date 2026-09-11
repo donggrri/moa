@@ -44,6 +44,8 @@ https://<project-ref>.supabase.co/auth/v1/callback
 
 카카오 앱의 Web 사이트 도메인에는 `http://localhost:5173`과 `https://donggrri.github.io`를 등록합니다. Client Secret·REST API 키는 GitHub와 `supabase-config.js`에 넣지 마세요.
 
+설정이 끝나면 [`../tests/release/web-kakao.md`](../tests/release/web-kakao.md)로 로컬·초대·Pages를 확인합니다. 카카오 동의 화면은 CI가 돌리지 않습니다.
+
 ## 3. 프론트 설정
 
 루트의 `supabase-config.example.js`를 참고해 `supabase-config.js`의 두 값을 입력합니다.

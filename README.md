@@ -7,11 +7,11 @@
 
 회사 PC에서는 Node를 켜지 말고 배포 주소로 로그인하면 됩니다. 집 노트북과 같은 계정을 사용합니다.
 
-## 현재 상태 (2026-08-17)
+## 현재 상태 (2026-09-11)
 
 - 이메일 로그인, 카카오 로그인, 공동 공간, 초대, 할일, 반복, 아이디어는 Supabase에 연결됨
 - GitHub Pages에 publishable key가 반영됨
-- MCP는 이 PC의 HTTP 서버(`127.0.0.1:8787`) + Cursor 클라이언트. 실제 조회는 `mcp-server/.env`가 필요함. 이후 서버는 라즈베리파이로 옮길 예정
+- MCP는 이 PC의 HTTP 서버(`127.0.0.1:8787`) + Cursor 클라이언트. 코드와 계약 테스트는 있음. **실서버·클라이언트 조회는 나중에 테스트** (`mcp-server/.env` 필요). 이후 서버는 라즈베리파이로 옮길 예정
 - 알림·카카오톡 공유·메시지는 아직 없음. 카카오 **로그인**은 앱에 들어 있고, Kakao Developers와 Supabase Provider 설정이 필요합니다.
 - 날짜가 지난 할일은 삭제되지 않음. **오늘** 화면과 **전체 할일**에서 지연으로 보임
 
@@ -90,4 +90,4 @@ npm run test:web
 npm run test:release
 ```
 
-`main`에 push하면 `.github/workflows/release.yml`이 위 테스트를 먼저 실행하고, 전부 성공한 경우에만 GitHub Pages artifact를 배포합니다. 릴리즈 절차와 저장소 최초 설정은 [`docs/RELEASE.md`](docs/RELEASE.md), 사람이 확인하는 운영 항목은 [`tests/release/`](tests/release/)를 참고하세요.
+`main`에 push하면 `.github/workflows/release.yml`이 위 테스트를 먼저 실행하고, 전부 성공한 경우에만 GitHub Pages artifact를 배포합니다. 카카오 실로그인은 CI에 넣지 않습니다. 자동/수동 경계는 [`tests/README.md`](tests/README.md), 카카오 손 확인은 [`tests/release/web-kakao.md`](tests/release/web-kakao.md), 릴리즈 절차는 [`docs/RELEASE.md`](docs/RELEASE.md)를 참고하세요.

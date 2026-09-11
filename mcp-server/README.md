@@ -14,7 +14,7 @@
 ## 포함 파일
 
 - `server.mjs`: STDIO와 `POST /mcp` HTTP, Supabase REST/RPC 어댑터
-- 단위 테스트: 저장소 `tests/mcp/server.test.mjs` (`npm test`). mutation은 저장소 루트 `npx stryker run --mutate mcp-server/server.mjs`. 릴리즈 체크리스트는 `tests/release/`
+- 단위 테스트: 저장소 `tests/mcp/server.test.mjs` (`npm test`, DB 없이 지금 가능). mutation은 저장소 루트 `npx stryker run --mutate mcp-server/server.mjs`. 실서버·Cursor/Grok 조회는 **나중에** `tests/release/mcp-http.md` (`MCP-PC-RUN`)
 - `.env.example`: 로컬 비밀 값 템플릿. 실제 값은 `.env`에만 둡니다
 - `package.json`: Node.js 실행 스크립트와 엔진 조건
 - `scripts/start-http.ps1`: 이 PC에서 HTTP 서버가 꺼져 있으면 시작

@@ -1,8 +1,8 @@
 # 이어서 하기 — MCP 서버
 
-마지막 갱신: 2026-08-17
+마지막 갱신: 2026-09-11
 
-이 세션의 목표: **이 PC가 켜져 있을 때만** MCP HTTP 서버가 처리하고, Cursor는 클라이언트다. 라즈베리파이는 그다음이다.
+MCP 서버 **코드와 계약 테스트는 있다.** 실서버·클라이언트 조회는 **나중에 테스트**한다. 라즈베리파이는 그 확인 다음이다.
 
 ## 지금 코드 상태
 
@@ -10,18 +10,22 @@
 - Cursor 클라이언트: `.cursor/mcp.json` → `http://127.0.0.1:8787/mcp` + `Authorization: Bearer ${env:MOA_MCP_TOKEN}`
 - Windows 로그온 자동 시작: `mcp-server/scripts/install-startup.ps1` (`npm run http:install`)
 - 파이용 유닛 예시: `mcp-server/scripts/moa-mcp-http.service` (아직 설치하지 않음)
-- 단위 테스트: `tests/mcp/server.test.mjs` (통과)
-- **아직 안 함**: 이 PC에 `mcp-server/.env` 실값, `http:install` 실행, Cursor에서 실제 할일 조회
+- 계약 테스트: `tests/mcp/server.test.mjs` (`npm test`). DB 없이 입력·권한·JSON-RPC만 검증. 지금 돌려도 된다.
+- **나중에 할 테스트 (MCP-PC-RUN)**: `mcp-server/.env` 실값, `http:install`, health, Cursor/Grok에서 `list_spaces`·할일 조회. 체크리스트는 [`../tests/release/mcp-http.md`](../tests/release/mcp-http.md).
 
-## 바로 할 일 (PC 서버)
+2026-09-11 확인: `.env` 없음, `127.0.0.1:8787` 닫힘, `MOA_MCP_TOKEN` 없음, 작업 스케줄러 `MoaMcpHttp` 없음. Grok `moa` 핸드셰이크 실패는 이 때문이다.
+
+## 나중에 할 일 (PC 실서버 테스트)
+
+지금 세션에서 하지 않는다. `.env`와 운영 토큰이 준비되면 아래를 수행한다.
 
 1. `mcp-server/.env.example`을 `.env`로 복사한다.
 2. `MOA_SUPABASE_URL`, `MOA_SUPABASE_SERVICE_ROLE_KEY`, `MOA_MCP_TOKENS=16자이상토큰:auth-uuid`를 넣는다. Auth UUID는 Supabase Authentication → Users.
 3. `cd mcp-server` 후 `npm run http:install` → 로그온 작업 등록 + 사용자 환경변수 `MOA_MCP_TOKEN`.
-4. Cursor를 재시작한다.
-5. [`../tests/release/mcp-http.md`](../tests/release/mcp-http.md)를 수행한다.
+4. Cursor(및 Grok)를 재시작한다.
+5. [`../tests/release/mcp-http.md`](../tests/release/mcp-http.md)의 필수 항목을 체크한다. 서버가 떠 있으면 `MOA_MCP_REQUIRE_LIVE=1` 후 `npm run test:release`도 돌린다.
 
-실패 시: `http://127.0.0.1:8787/health`가 `{"ok":true}`인지, Cursor에 `service_role`이 들어가지 않았는지 본다.
+실패 시: `http://127.0.0.1:8787/health`가 `{"ok":true}`인지, 클라이언트에 `service_role`이 들어가지 않았는지 본다. 통과하면 `FEATURES.md`의 `MCP-PC-RUN`을 `shipped`로 옮긴다.
 
 ## 그다음 (라즈베리파이)
 

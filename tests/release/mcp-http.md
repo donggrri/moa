@@ -1,10 +1,14 @@
 # 릴리즈 테스트 — MCP HTTP
 
-대상: 이 PC가 서버, Cursor가 클라이언트. `127.0.0.1:8787`.
+대상: 이 PC가 서버, Cursor(또는 Grok)가 클라이언트. `127.0.0.1:8787`.
 
-자동: 저장소 루트에서 `npm test`. 서버가 떠 있으면 `npm run test:release`.
+상태: **아직 안 함. 나중에 테스트한다.** (`FEATURES.md` `MCP-PC-RUN`)
 
-## 필수 (로컬 서버)
+계약 테스트(`npm test` → `tests/mcp/server.test.mjs`)는 DB 없이 지금 돌아간다. 아래 체크리스트는 `.env`와 실서버가 있을 때 수행한다. 2026-09-11 기준 `.env` 없음, 8787 닫힘, `MOA_MCP_TOKEN` 없음.
+
+자동: 저장소 루트에서 `npm test`. 실서버를 켠 뒤에만 `MOA_MCP_REQUIRE_LIVE=1` 후 `npm run test:release`.
+
+## 필수 (로컬 서버) — 나중에
 
 - [ ] `mcp-server/.env`가 있고 Git에 없음
 - [ ] `npm run http:start` 또는 로그온 작업 후 `http://127.0.0.1:8787/health`가 `{"ok":true}`
