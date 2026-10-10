@@ -87,7 +87,7 @@
 - 알림 예약·재시도·전송 결과 테이블이 없다.
 - “이번 회차만 / 앞으로 모든 회차” 수정 정책이 없다.
 - 소유권 이전 UI가 없다.
-- 카카오 로그인 화면과 Supabase OAuth 호출은 들어갔다. Kakao Developers 앱과 Supabase Kakao provider 실값은 운영자가 넣어야 한다. 카카오톡 전송은 아직 없다.
+- 카카오 로그인(버튼·OAuth 복귀·초대·로그아웃·에러) 코드는 들어갔다. Kakao Developers·Supabase Kakao provider·Redirect URL·live DB의 `002_kakao_profile_name.sql`은 운영자가 적용한다. 카카오톡 전송은 아직 없다.
 
 프론트엔드는 버리고 다시 짜기보다, **현재 화면을 유지하고 서버 계약을 기준으로 기능을 붙이는 것**이 맞다.
 

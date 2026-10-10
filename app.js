@@ -6,9 +6,11 @@ import {
 import {
   isInviteCode,
   readInviteFromLocation,
+  hasAuthCallbackParams,
   oauthRedirectUrl,
   parseOAuthCallbackError,
   stripOAuthCallbackErrorParams,
+  stripOAuthCallbackParams,
   displayNameFromUser,
   persistInviteCode,
   readPersistedInviteCode,
@@ -168,7 +170,7 @@ import {
       '<div class="setup-steps"><strong>연결 방법</strong><ol><li><code>supabase-config.example.js</code>를 복사해 같은 위치에 <code>supabase-config.js</code>를 만드세요.</li><li>Supabase의 Project URL과 Publishable/anon key를 입력하세요.</li><li>파일을 저장하고 이 페이지를 새로고침하세요.</li></ol></div>',
       '<pre class="setup-code"><code>' + escapeHtml(example) + '</code></pre>',
       '<a class="button outline auth-submit" href="https://supabase.com/dashboard" target="_blank" rel="noreferrer">Supabase Dashboard 열기</a>',
-      '<p class="auth-footnote">프로젝트를 만든 뒤 <code>supabase/migrations/001_initial_schema.sql</code>과 <code>002_space_notes.sql</code>을 SQL Editor에서 실행해야 합니다.</p>',
+      '<p class="auth-footnote">프로젝트를 만든 뒤 <code>supabase/migrations/001_initial_schema.sql</code>, <code>002_space_notes.sql</code>, <code>002_kakao_profile_name.sql</code>을 SQL Editor에서 실행해야 합니다.</p>',
       '<p class="auth-footnote">브라우저에는 Publishable/anon key만 사용합니다. service_role 키는 절대 입력하지 마세요.</p>',
       '<button class="button primary auth-submit" data-action="reload-page" type="button">설정 후 새로고침</button>'
     ].join('');
@@ -240,6 +242,28 @@ import {
     if (/unable to exchange external code|error exchanging oauth|unexpected_failure/i.test(message)) return '카카오 로그인에 실패했어요. 다시 시도해주세요.';
     if (/access_denied|user cancelled|user canceled/i.test(message)) return '카카오 로그인을 취소했어요.';
     return message || fallback || '요청을 처리하지 못했어요. 잠시 후 다시 시도해주세요.';
+  }
+
+  function scrubOAuthCallbackFromUrl() {
+    try {
+      window.history.replaceState({}, document.title, stripOAuthCallbackParams(window.location.href));
+    } catch (error) {
+      /* file:// 환경에서는 주소를 바꾸지 않습니다. */
+    }
+  }
+
+  function authBootMarkup() {
+    var returning = hasAuthCallbackParams(window.location.href);
+    var title = returning ? '카카오 로그인 마무리 중' : '불러오는 중';
+    var description = returning
+      ? '카카오에서 돌아왔어요. 로그인을 확인하고 있어요.'
+      : '로그인 상태를 확인하고 있어요.';
+    return [
+      '<div class="auth-brand"><span class="brand-mark">M</span><div><strong>모아</strong><span>함께 쓰는 생활 공간</span></div></div>',
+      '<p class="auth-kicker">MOA SHARED SPACE</p>',
+      '<h1 class="auth-title">' + title + '</h1>',
+      '<p class="auth-description">' + description + '</p>'
+    ].join('');
   }
 
   function consumeAuthCallbackError() {
@@ -629,7 +653,16 @@ import {
     var member = space && Array.isArray(space.members)
       ? space.members.find(function (item) { return item.id === state.currentUserId; })
       : null;
-    if (member) return member;
+    if (member) {
+      var authName = displayNameFromUser(state.currentUserProfile || {});
+      if (member.name === '모아 사용자' && authName && authName !== '나') {
+        return Object.assign({}, member, {
+          name: authName,
+          initials: String(authName).slice(0, 1).toUpperCase()
+        });
+      }
+      return member;
+    }
     var profile = state.currentUserProfile || {};
     var name = displayNameFromUser(profile);
     return {
@@ -2213,6 +2246,7 @@ import {
 
       if (inviteError) showToast(errorMessage(inviteError, '초대 링크로 참여하지 못했어요.'), 'error');
       if (joinedSpace) showToast('공동 공간에 참여했어요.');
+      scrubOAuthCallbackFromUrl();
     } catch (error) {
       clearRealtimeSubscription();
       state = emptyState();
@@ -2247,12 +2281,7 @@ import {
     }
     store = globalThis.MoaDataStore.create(authClient);
     setAppVisible(false);
-    document.getElementById('authContent').innerHTML = [
-      '<div class="auth-brand"><span class="brand-mark">M</span><div><strong>모아</strong><span>함께 쓰는 생활 공간</span></div></div>',
-      '<p class="auth-kicker">MOA SHARED SPACE</p>',
-      '<h1 class="auth-title">불러오는 중</h1>',
-      '<p class="auth-description">로그인 상태를 확인하고 있어요.</p>'
-    ].join('');
+    document.getElementById('authContent').innerHTML = authBootMarkup();
 
     authClient.auth.onAuthStateChange(function (event, session) {
       window.setTimeout(function () {

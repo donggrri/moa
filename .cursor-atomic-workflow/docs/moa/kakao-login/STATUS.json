@@ -1,0 +1,24 @@
+{
+  "slug": "kakao-login",
+  "shortRepo": "moa",
+  "repo": "/workspace",
+  "worktree": null,
+  "cwd": "/workspace",
+  "branch": "cursor/kakao-login-baf8",
+  "phase": "complete",
+  "artifacts": {
+    "explore": true,
+    "plan": true,
+    "tasks": true,
+    "review": true
+  },
+  "tasks": {
+    "total": 3,
+    "done": 3,
+    "blockedId": null,
+    "blockedReason": null
+  },
+  "lastCommand": "cursor-atomic-wrapup",
+  "sessionId": "bc-3b8ba0af-40b0-5154-883d-6047fa5bbaf8",
+  "updatedAt": "2026-10-10T07:34:30.000Z"
+}
