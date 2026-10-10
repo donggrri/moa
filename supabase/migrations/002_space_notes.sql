@@ -136,14 +136,16 @@ create or replace function public.new_note_publish_token()
 returns text
 language sql
 volatile
+set search_path = public, extensions
 as $$
-  select encode(gen_random_bytes(24), 'hex');
+  select encode(extensions.gen_random_bytes(24), 'hex');
 $$;
 
 create or replace function public.extract_note_tags(p_body text)
 returns text[]
 language sql
 immutable
+set search_path = public
 as $$
   select coalesce(array_agg(distinct tag), '{}'::text[])
   from (
@@ -157,6 +159,7 @@ create or replace function public.extract_note_wiki_titles(p_body text)
 returns text[]
 language sql
 immutable
+set search_path = public
 as $$
   select coalesce(array_agg(distinct btrim(title)), '{}'::text[])
   from (
@@ -206,6 +209,7 @@ create or replace function public.storage_uuid_segment(p_name text, p_index inte
 returns uuid
 language plpgsql
 stable
+set search_path = public, storage
 as $$
 declare
   v_part text;
