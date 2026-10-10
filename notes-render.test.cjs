@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const notes = require('./notes-render.js');
+const notes = require('./notes-render.cjs');
 
 test('extracts hashtags and ignores markdown headings', () => {
   const tags = notes.extractTags('# 제목\n본문 #집안일 과 #장보기\n');
