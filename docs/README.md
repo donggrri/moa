@@ -12,6 +12,7 @@
 | MCP·서버 운영 | [`../mcp-server/README.md`](../mcp-server/README.md), [`CONTINUE.md`](CONTINUE.md) | `service_role`을 클라이언트 설정 예시에 넣기 |
 | 도메인 용어 | [`../CONTEXT.md`](../CONTEXT.md) | 같은 뜻을 문서마다 다른 말로 쓰기 |
 | 스키마·RPC | [`../supabase/README.md`](../supabase/README.md), `mcp-server/README.md` 계약 절 | 웹과 MCP가 다른 컬럼명을 쓰게 두기 |
+| Cursor atomic workflow | [`ATOMIC_WORKFLOW.md`](ATOMIC_WORKFLOW.md), `.cursor/rules/atomic-workflow.mdc` | PLAN을 제품 루트에 두거나 `~/.cursor-atomic-workflow`만 쓰기 |
 
 ## 역할
 

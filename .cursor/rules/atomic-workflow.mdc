@@ -1,0 +1,19 @@
+---
+description: cursor-atomic-workflow 작업 홈과 슬래시 커맨드 사용
+alwaysApply: true
+---
+
+# Atomic workflow (cursor-atomic-workflow)
+
+기능 작업을 시작할 때(특히 `/cursor-atomic-plan` 이전) 셸에 작업 홈을 고정한다. Cloud Agent VM은 매 실행마다 비어 있으므로 **반드시** 저장소 안 경로를 쓴다.
+
+```bash
+export CURSOR_ATOMIC_WORKFLOW_HOME="$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.cursor-atomic-workflow"
+```
+
+- PLAN·TASKS·REVIEW·EXPLORE: `.cursor-atomic-workflow/docs/moa/<slug>/`
+- 파이프라인 로그·런 상태: `.cursor-atomic-workflow/runs/moa/<slug>/` (gitignore, 커밋하지 않음)
+
+흐름: (선택) `/cursor-atomic-explore` → `/cursor-atomic-plan` → task → execute → review → `/cursor-atomic-wrapup`. 상세는 `docs/ATOMIC_WORKFLOW.md`.
+
+moa 문서·기능 대장 갱신은 기존 `docs.mdc` 규칙을 그대로 따른다. 워크플로 산출물만 위 작업 홈에 두고, 제품 루트에 `PLAN-*.md`를 흩뿌리지 않는다.
