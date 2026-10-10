@@ -1,0 +1,8 @@
+{
+  "profile": "moa",
+  "agy": {
+    "plan": "ask",
+    "implement": "sdk",
+    "review": "ask"
+  }
+}

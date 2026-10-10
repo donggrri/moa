@@ -6,3 +6,7 @@ reports/
 !.env.example
 mcp-server/.env
 mcp-server/logs/
+
+# cursor-atomic-workflow 런타임 (PLAN 등은 .cursor-atomic-workflow/docs/ 에 두고 필요 시 커밋)
+.cursor-atomic-workflow/runs/
+.cursor-atomic-workflow/evidence/
