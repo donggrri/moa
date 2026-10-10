@@ -66,6 +66,26 @@ function stripOAuthCallbackErrorParams(href) {
   }
 }
 
+function stripOAuthCallbackParams(href) {
+  try {
+    var url = new URL(href);
+    var code = url.searchParams.get('code') || '';
+    if (code && !isInviteCode(code)) {
+      url.searchParams.delete('code');
+    }
+    url.searchParams.delete('state');
+    url.searchParams.delete('error');
+    url.searchParams.delete('error_code');
+    url.searchParams.delete('error_description');
+    if (url.hash && url.hash.indexOf('access_token') !== -1) {
+      url.hash = '';
+    }
+    return url.pathname + (url.search ? url.search : '') + url.hash;
+  } catch (error) {
+    return href;
+  }
+}
+
 function displayNameFromUser(user) {
   user = user || {};
   var metadata = user.user_metadata || {};
@@ -124,6 +144,7 @@ var api = {
   oauthRedirectUrl: oauthRedirectUrl,
   parseOAuthCallbackError: parseOAuthCallbackError,
   stripOAuthCallbackErrorParams: stripOAuthCallbackErrorParams,
+  stripOAuthCallbackParams: stripOAuthCallbackParams,
   displayNameFromUser: displayNameFromUser,
   persistInviteCode: persistInviteCode,
   readPersistedInviteCode: readPersistedInviteCode,
@@ -141,6 +162,7 @@ export {
   oauthRedirectUrl,
   parseOAuthCallbackError,
   stripOAuthCallbackErrorParams,
+  stripOAuthCallbackParams,
   displayNameFromUser,
   persistInviteCode,
   readPersistedInviteCode,

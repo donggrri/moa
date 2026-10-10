@@ -7,6 +7,7 @@ import {
   oauthRedirectUrl,
   parseOAuthCallbackError,
   stripOAuthCallbackErrorParams,
+  stripOAuthCallbackParams,
   displayNameFromUser,
   persistInviteCode,
   readPersistedInviteCode,
@@ -103,6 +104,22 @@ test("kakao nickname metadata becomes the display name", () => {
   }), "이메일이름");
   assert.equal(displayNameFromUser({ email: "you@example.com" }), "you");
   assert.equal(displayNameFromUser({}), "나");
+});
+
+test("oauth callback params are stripped while invite codes stay", () => {
+  const href = "http://localhost:5173/?code=pkce-auth-code&state=xyz&invite=HOME12SPACE9";
+  assert.equal(
+    stripOAuthCallbackParams(href),
+    "/?invite=HOME12SPACE9"
+  );
+  assert.equal(
+    stripOAuthCallbackParams("http://localhost:5173/?code=x&state=y#access_token=abc"),
+    "/"
+  );
+  assert.equal(
+    stripOAuthCallbackParams("http://localhost:5173/?code=HOME12SPACE9"),
+    "/?code=HOME12SPACE9"
+  );
 });
 
 test("pending invite survives the kakao round trip in session storage", () => {
