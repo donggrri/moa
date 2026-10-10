@@ -1,6 +1,9 @@
+import { timingSafeEqual } from "node:crypto";
+import { readFileSync } from "node:fs";
+import http from "node:http";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 
 const SERVER_NAME = "moa-mcp-server";
 const SERVER_VERSION = "0.1.0";
@@ -11,6 +14,9 @@ const SUPPORTED_PROTOCOL_VERSIONS = new Set([
   "2024-11-05"
 ]);
 const REQUEST_TIMEOUT_MS = 10_000;
+export const DEFAULT_MAX_HTTP_BODY_BYTES = 1_048_576;
+const MAX_HTTP_BODY_BYTES = 10 * 1024 * 1024;
+const LOOPBACK_HTTP_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/;
@@ -111,22 +117,172 @@ function validateSupabaseUrl(rawUrl) {
   return parsed.toString().replace(/\/$/, "");
 }
 
-export function loadConfig(environment = process.env) {
+export function loadSupabaseConfig(environment = process.env) {
   const serviceRoleKey = trimEnvironmentValue(environment.MOA_SUPABASE_SERVICE_ROLE_KEY);
   if (!serviceRoleKey) {
     throw new ConfigurationError("MOA_SUPABASE_SERVICE_ROLE_KEY 환경변수가 필요합니다.");
   }
 
+  return Object.freeze({
+    url: validateSupabaseUrl(environment.MOA_SUPABASE_URL),
+    serviceRoleKey
+  });
+}
+
+export function loadConfig(environment = process.env) {
   const userId = trimEnvironmentValue(environment.MOA_MCP_USER_ID);
   if (!UUID_PATTERN.test(userId)) {
     throw new ConfigurationError("MOA_MCP_USER_ID는 유효한 UUID여야 합니다.");
   }
 
   return Object.freeze({
-    url: validateSupabaseUrl(environment.MOA_SUPABASE_URL),
-    serviceRoleKey,
+    ...loadSupabaseConfig(environment),
     userId
   });
+}
+
+function unquoteEnvironmentValue(value) {
+  if (
+    (value.startsWith("\"") && value.endsWith("\"")) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    return value.slice(1, -1);
+  }
+  return value;
+}
+
+export function normalizeHttpBindHost(rawHost, allowRemoteHost = false) {
+  let host = trimEnvironmentValue(rawHost) || "127.0.0.1";
+  if (host.startsWith("[") && host.endsWith("]") && host.length >= 2) {
+    host = host.slice(1, -1);
+  }
+  const canonical = host.toLowerCase();
+  if (!allowRemoteHost && !LOOPBACK_HTTP_HOSTS.has(canonical)) {
+    throw new ConfigurationError("MOA_MCP_HTTP_HOST는 127.0.0.1, localhost, ::1만 허용합니다.");
+  }
+  return canonical;
+}
+
+function parseHttpBodyLimit(rawValue) {
+  const raw = rawValue === undefined || rawValue === null || rawValue === ""
+    ? String(DEFAULT_MAX_HTTP_BODY_BYTES)
+    : String(rawValue).trim();
+  const value = Number(raw);
+  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value < 1 || value > MAX_HTTP_BODY_BYTES) {
+    throw new ConfigurationError(
+      "MOA_MCP_HTTP_MAX_BODY_BYTES must be an integer between 1 and " + MAX_HTTP_BODY_BYTES + "."
+    );
+  }
+  return value;
+}
+
+function secretEquals(left, right) {
+  const leftBuffer = Buffer.from(String(left));
+  const rightBuffer = Buffer.from(String(right));
+  const length = Math.max(leftBuffer.length, rightBuffer.length, 1);
+  const paddedLeft = Buffer.alloc(length);
+  const paddedRight = Buffer.alloc(length);
+  leftBuffer.copy(paddedLeft);
+  rightBuffer.copy(paddedRight);
+  return timingSafeEqual(paddedLeft, paddedRight) && leftBuffer.length === rightBuffer.length;
+}
+
+export function parseMcpTokens(raw) {
+  const tokenMap = new Map();
+  const source = trimEnvironmentValue(raw);
+  if (!source) return tokenMap;
+
+  for (const part of source.split(/[,\n]/)) {
+    const pair = part.trim();
+    if (!pair) continue;
+    const separator = pair.lastIndexOf(":");
+    if (separator <= 0) {
+      throw new ConfigurationError("MOA_MCP_TOKENS는 token:uuid 형식이어야 합니다.");
+    }
+    const token = pair.slice(0, separator).trim();
+    const userId = pair.slice(separator + 1).trim();
+    if (token.length < 16) {
+      throw new ConfigurationError("MCP 토큰은 16자 이상이어야 합니다.");
+    }
+    if (!UUID_PATTERN.test(userId)) {
+      throw new ConfigurationError("MOA_MCP_TOKENS의 사용자 ID는 유효한 UUID여야 합니다.");
+    }
+    tokenMap.set(token, userId);
+  }
+  return tokenMap;
+}
+
+export function resolveBearerUserId(authorizationHeader, tokenMap) {
+  const header = trimEnvironmentValue(authorizationHeader);
+  const match = header.match(/^Bearer\s+(\S+)$/i);
+  if (!match) return null;
+  return tokenMap.get(match[1]) || null;
+}
+
+export function loadHttpServerConfig(environment = process.env) {
+  const supabase = loadSupabaseConfig(environment);
+  const tokenMap = parseMcpTokens(environment.MOA_MCP_TOKENS);
+  if (!tokenMap.size) {
+    throw new ConfigurationError("HTTP 모드에는 MOA_MCP_TOKENS가 필요합니다.");
+  }
+
+  const allowRemoteHost = trimEnvironmentValue(environment.MOA_MCP_ALLOW_REMOTE_HOST).toLowerCase() === "true";
+  const host = normalizeHttpBindHost(environment.MOA_MCP_HTTP_HOST, allowRemoteHost);
+  const rawPort = trimEnvironmentValue(environment.MOA_MCP_HTTP_PORT) || "8787";
+  const port = Number(rawPort);
+  if (!/^\d+$/.test(rawPort) || !Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new ConfigurationError("MOA_MCP_HTTP_PORT가 올바르지 않습니다.");
+  }
+
+  const allowedOrigins = trimEnvironmentValue(environment.MOA_MCP_HTTP_ORIGINS)
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const maxBodyBytes = parseHttpBodyLimit(environment.MOA_MCP_HTTP_MAX_BODY_BYTES);
+
+  return Object.freeze({
+    ...supabase,
+    host,
+    port,
+    tokenMap,
+    allowedOrigins,
+    maxBodyBytes
+  });
+}
+
+export function applyEnvFile(contents, environment = process.env) {
+  const lines = String(contents || "").split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const separator = trimmed.indexOf("=");
+    if (separator <= 0) continue;
+    const key = trimmed.slice(0, separator).trim();
+    let value = trimmed.slice(separator + 1).trim();
+    if (
+      (value.startsWith("\"") && value.endsWith("\"")) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    if (!trimEnvironmentValue(environment[key])) {
+      environment[key] = value;
+    }
+  }
+  return environment;
+}
+
+export function loadLocalEnvFile(
+  environment = process.env,
+  filePath = resolve(dirname(fileURLToPath(import.meta.url)), ".env")
+) {
+  try {
+    applyEnvFile(readFileSync(filePath, "utf8"), environment);
+  } catch (error) {
+    if (error && error.code === "ENOENT") return environment;
+    throw error;
+  }
+  return environment;
 }
 
 function assertSafeResourcePath(path) {
@@ -303,6 +459,14 @@ function optionalFrequency(value, field) {
   return value;
 }
 
+function optionalStatus(value, field) {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (value !== "open" && value !== "done") {
+    throw new InvalidParamsError(`${field}는 open 또는 done이어야 합니다.`);
+  }
+  return value;
+}
+
 function parseInput(toolName, input, allowedKeys, parser) {
   const object = requireObject(input, toolName);
   rejectUnknownKeys(object, allowedKeys, toolName);
@@ -322,6 +486,16 @@ function parseSpaceInput(toolName, input, extraKeys = new Set()) {
 
 function parseTodayTasksInput(input) {
   return parseSpaceInput("get_today_tasks", input);
+}
+
+function parseListTasksInput(input) {
+  return parseInput("list_tasks", input, new Set(["space_id", "due_date", "status"]), (object) => ({
+    spaceId: requiredUuid(object.space_id, "space_id"),
+    dueDate: object.due_date === undefined || object.due_date === null || object.due_date === ""
+      ? undefined
+      : requiredDate(object.due_date, "due_date"),
+    status: optionalStatus(object.status, "status")
+  }));
 }
 
 function parseAddTaskInput(input) {
@@ -547,6 +721,19 @@ export function createMoaOperations({ db, userId, now = () => new Date() }) {
     return { space_id: input.spaceId, date, tasks };
   }
 
+  async function listTasks(input) {
+    await membershipsForCurrentUser(input.spaceId);
+    const query = {
+      select: TABLE_FIELDS.tasks,
+      space_id: `eq.${input.spaceId}`,
+      order: "due_date.asc,due_time.asc.nullslast,created_at.asc"
+    };
+    if (input.dueDate) query.due_date = `eq.${input.dueDate}`;
+    if (input.status) query.status = `eq.${input.status}`;
+    const tasks = asRows(await db.select("tasks", query));
+    return { space_id: input.spaceId, tasks };
+  }
+
   async function addTask(input) {
     await membershipsForCurrentUser(input.spaceId);
     const assigneeId = input.assigneeId || userId;
@@ -649,6 +836,7 @@ export function createMoaOperations({ db, userId, now = () => new Date() }) {
   return Object.freeze({
     listSpaces,
     getTodayTasks,
+    listTasks,
     addTask,
     completeTask,
     postponeTask,
@@ -680,6 +868,20 @@ const TOOL_DEFINITIONS = Object.freeze([
     inputSchema: {
       type: "object",
       properties: { space_id: UUID_SCHEMA },
+      required: ["space_id"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "list_tasks",
+    description: "지정한 공간의 할일 목록을 조회합니다. due_date와 status(open|done)로 필터할 수 있습니다.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        space_id: UUID_SCHEMA,
+        due_date: DATE_SCHEMA,
+        status: { type: "string", enum: ["open", "done"] }
+      },
       required: ["space_id"],
       additionalProperties: false
     }
@@ -803,6 +1005,8 @@ export async function callTool(name, input, operations) {
       return operations.listSpaces();
     case "get_today_tasks":
       return operations.getTodayTasks(parseTodayTasksInput(input));
+    case "list_tasks":
+      return operations.listTasks(parseListTasksInput(input));
     case "add_task":
       return operations.addTask(parseAddTaskInput(input));
     case "complete_task":
@@ -865,7 +1069,7 @@ export async function handleMessage(message, operations) {
         protocolVersion: negotiatedProtocolVersion(params.protocolVersion),
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
-        instructions: "Moa 공동 공간 도구입니다. 모든 도구는 MOA_MCP_USER_ID가 멤버인 공간만 접근합니다."
+        instructions: "Moa 공동 공간 도구입니다. 인증된 MCP 사용자가 멤버인 공간만 접근합니다."
       }
     };
   }
@@ -929,7 +1133,190 @@ export function startStdioServer(operations, input = process.stdin, output = pro
   return readline;
 }
 
+export function jsonRpcHttpBody(response) {
+  if (response.kind === "notification") return null;
+  if (response.kind === "result") return { jsonrpc: "2.0", id: response.id, result: response.result };
+  return { jsonrpc: "2.0", id: response.id, error: { code: response.code, message: response.message } };
+}
+
+function headerValue(headers, name) {
+  if (!headers) return "";
+  const direct = headers[name];
+  if (typeof direct === "string") return direct;
+  const lower = headers[name.toLowerCase()];
+  return typeof lower === "string" ? lower : "";
+}
+
+function originAllowed(origin, allowedOrigins) {
+  if (!origin) return true;
+  return allowedOrigins.includes(origin);
+}
+
+export async function handleHttpMcpRequest(request, options) {
+  const method = String(request.method || "GET").toUpperCase();
+  const url = new URL(request.url || "/", "http://127.0.0.1");
+  const allowedOrigins = options.allowedOrigins || [];
+  const origin = headerValue(request.headers, "origin");
+
+  if (origin && !originAllowed(origin, allowedOrigins)) {
+    return { status: 403, headers: { "Content-Type": "application/json" }, body: { error: "origin not allowed" } };
+  }
+
+  if (method === "GET" && url.pathname === "/health") {
+    return { status: 200, headers: { "Content-Type": "application/json" }, body: { ok: true } };
+  }
+
+  if (url.pathname !== "/mcp") {
+    return { status: 404, headers: { "Content-Type": "application/json" }, body: { error: "not found" } };
+  }
+
+  if (method === "OPTIONS") {
+    return { status: 204, headers: { "Access-Control-Allow-Headers": "Authorization, Content-Type, MCP-Protocol-Version" }, body: null };
+  }
+
+  if (method !== "POST") {
+    return { status: 405, headers: { Allow: "POST, OPTIONS" }, body: { error: "method not allowed" } };
+  }
+
+  const userId = resolveBearerUserId(headerValue(request.headers, "authorization"), options.tokenMap);
+  if (!userId) {
+    return {
+      status: 401,
+      headers: { "Content-Type": "application/json", "WWW-Authenticate": "Bearer" },
+      body: { error: "unauthorized" }
+    };
+  }
+
+  let message;
+  try {
+    message = typeof request.body === "string" ? JSON.parse(request.body) : request.body;
+  } catch {
+    return {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+      body: { jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error." } }
+    };
+  }
+
+  const operations = options.createOperations(userId);
+  const response = await handleMessage(message, operations);
+  const body = jsonRpcHttpBody(response);
+  if (body === null) {
+    return { status: 202, headers: {}, body: null };
+  }
+  return { status: 200, headers: { "Content-Type": "application/json" }, body };
+}
+
+class HttpBodyTooLargeError extends Error {
+  constructor() {
+    super("HTTP request body exceeds the configured limit.");
+    this.name = "HttpBodyTooLargeError";
+    this.code = "HTTP_BODY_TOO_LARGE";
+  }
+}
+
+function readRequestBody(incoming, maxBytes) {
+  return new Promise((resolveBody, reject) => {
+    const chunks = [];
+    let totalBytes = 0;
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+
+    incoming.on("error", (error) => fail(error));
+    const contentLength = Number(incoming.headers && incoming.headers["content-length"]);
+    if (Number.isSafeInteger(contentLength) && contentLength > maxBytes) {
+      incoming.resume();
+      fail(new HttpBodyTooLargeError());
+      return;
+    }
+
+    incoming.on("data", (chunk) => {
+      if (settled) return;
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      totalBytes += buffer.length;
+      if (totalBytes > maxBytes) {
+        incoming.resume();
+        fail(new HttpBodyTooLargeError());
+        return;
+      }
+      chunks.push(buffer);
+    });
+    incoming.on("end", () => {
+      if (settled) return;
+      settled = true;
+      resolveBody(Buffer.concat(chunks, totalBytes).toString("utf8"));
+    });
+  });
+}
+
+export function startHttpServer(options) {
+  const host = options.host || "127.0.0.1";
+  const port = options.port ?? 8787;
+  const maxBodyBytes = parseHttpBodyLimit(options.maxBodyBytes);
+  const server = http.createServer(async (incoming, outgoing) => {
+    try {
+      const body = incoming.method === "POST"
+        ? await readRequestBody(incoming, maxBodyBytes)
+        : "";
+      const result = await handleHttpMcpRequest({
+        method: incoming.method,
+        url: incoming.url,
+        headers: incoming.headers,
+        body
+      }, options);
+      const headers = result.headers || {};
+      outgoing.writeHead(result.status, headers);
+      if (result.body == null) {
+        outgoing.end();
+        return;
+      }
+      outgoing.end(typeof result.body === "string" ? result.body : JSON.stringify(result.body));
+    } catch (error) {
+      if (error && error.code === "HTTP_BODY_TOO_LARGE") {
+        outgoing.writeHead(413, { "Content-Type": "application/json" });
+        outgoing.end(JSON.stringify({ error: "request body too large" }));
+        return;
+      }
+      logError(error);
+      outgoing.writeHead(500, { "Content-Type": "application/json" });
+      outgoing.end(JSON.stringify({ error: "internal error" }));
+    }
+  });
+
+  server.listen(port, host, () => {
+    const address = server.address();
+    const actualPort = address && typeof address === "object" ? address.port : port;
+    console.error(JSON.stringify({
+      level: "info",
+      server: SERVER_NAME,
+      transport: "http",
+      host,
+      port: actualPort
+    }));
+  });
+  return server;
+}
+
 async function main() {
+  loadLocalEnvFile();
+  if (process.argv.includes("--http")) {
+    const httpConfig = loadHttpServerConfig();
+    const db = createSupabaseRestClient(httpConfig);
+    startHttpServer({
+      host: httpConfig.host,
+      port: httpConfig.port,
+      maxBodyBytes: httpConfig.maxBodyBytes,
+      tokenMap: httpConfig.tokenMap,
+      allowedOrigins: httpConfig.allowedOrigins,
+      createOperations: (userId) => createMoaOperations({ db, userId })
+    });
+    return;
+  }
+
   const config = loadConfig();
   const db = createSupabaseRestClient(config);
   const operations = createMoaOperations({ db, userId: config.userId });

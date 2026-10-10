@@ -481,8 +481,11 @@ declare
   v_display_name text;
 begin
   v_display_name := coalesce(
+    nullif(btrim(new.raw_user_meta_data ->> 'display_name'), ''),
     nullif(btrim(new.raw_user_meta_data ->> 'full_name'), ''),
     nullif(btrim(new.raw_user_meta_data ->> 'name'), ''),
+    nullif(btrim(new.raw_user_meta_data ->> 'nickname'), ''),
+    nullif(btrim(new.raw_user_meta_data ->> 'preferred_username'), ''),
     nullif(split_part(coalesce(new.email, ''), '@', 1), ''),
     '모아 사용자'
   );

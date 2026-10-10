@@ -1,0 +1,159 @@
+name: Release
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-pages-release
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check JavaScript syntax
+        run: |
+          node --check server.mjs
+          node --check app.js
+          node --check data-store.js
+          node --check task-visibility.js
+          node --check auth-flow.js
+          node --check supabase-client.js
+          node --check supabase-config.js
+          node --check mcp-server/server.mjs
+
+      - name: Run MCP contract tests
+        run: npm test
+
+      - name: Run static web smoke tests
+        run: npm run test:web
+
+      - name: Start MCP HTTP server for release smoke tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          env \
+            MOA_SUPABASE_URL=https://ci.invalid.example \
+            MOA_SUPABASE_SERVICE_ROLE_KEY=ci-test-service-role \
+            MOA_MCP_TOKENS=ci-release-test-token-1234:11111111-1111-4111-8111-111111111111 \
+            MOA_MCP_HTTP_HOST=127.0.0.1 \
+            MOA_MCP_HTTP_PORT=8787 \
+            node mcp-server/server.mjs --http > "$RUNNER_TEMP/moa-mcp.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/moa-mcp.pid"
+
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8787/health; then
+              exit 0
+            fi
+            sleep 1
+          done
+
+          cat "$RUNNER_TEMP/moa-mcp.log"
+          exit 1
+
+      - name: Run required MCP HTTP release smoke tests
+        env:
+          MOA_MCP_REQUIRE_LIVE: "1"
+        run: npm run test:release
+
+      - name: Detect MCP implementation changes
+        id: mcp_changes
+        shell: bash
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            base="$GITHUB_EVENT_BEFORE"
+            if [[ "$base" == "0000000000000000000000000000000000000000" ]]; then
+              base="${GITHUB_SHA}^"
+            fi
+            changed_files="$(git diff --name-only "$base" "$GITHUB_SHA")"
+          else
+            changed_files="$(git diff --name-only "origin/$GITHUB_BASE_REF...$GITHUB_SHA")"
+          fi
+
+          if grep -Eq '^mcp-server/.*\.mjs$' <<< "$changed_files"; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run mutation tests for release candidates
+        if: github.event_name != 'pull_request' && steps.mcp_changes.outputs.changed == 'true'
+        run: npm run test:mutate
+
+      - name: Stop MCP HTTP server
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f "$RUNNER_TEMP/moa-mcp.pid" ]]; then
+            kill "$(cat "$RUNNER_TEMP/moa-mcp.pid")" 2>/dev/null || true
+          fi
+
+  build:
+    name: Build Pages artifact
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Prepare static site
+        run: |
+          mkdir _site
+          cp index.html styles.css app.js data-store.js task-visibility.js auth-flow.js supabase-client.js supabase-config.js _site/
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy Pages
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

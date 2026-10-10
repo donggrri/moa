@@ -1,0 +1,23 @@
+# Later: Raspberry Pi systemd unit (not used on the Windows PC phase).
+# Copy to /etc/systemd/system/moa-mcp-http.service and edit User/WorkingDirectory.
+#
+#   sudo systemctl enable --now moa-mcp-http
+#
+# Keep the process on 127.0.0.1 and put Cloudflare Tunnel in front for company PCs.
+
+[Unit]
+Description=Moa MCP HTTP server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/moa/mcp-server
+ExecStart=/usr/bin/node server.mjs --http
+Restart=on-failure
+RestartSec=3
+EnvironmentFile=/home/pi/moa/mcp-server/.env
+
+[Install]
+WantedBy=multi-user.target

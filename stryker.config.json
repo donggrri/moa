@@ -1,0 +1,25 @@
+{
+  "packageManager": "npm",
+  "testRunner": "command",
+  "commandRunner": {
+    "command": "node --test tests/mcp/server.test.mjs"
+  },
+  "coverageAnalysis": "off",
+  "mutate": [
+    "mcp-server/server.mjs:1-1208"
+  ],
+  "ignorePatterns": [
+    "docs/**",
+    "node_modules/**"
+  ],
+  "reporters": [
+    "clear-text",
+    "progress"
+  ],
+  "timeoutMS": 60000,
+  "thresholds": {
+    "high": 80,
+    "low": 60,
+    "break": 50
+  }
+}
