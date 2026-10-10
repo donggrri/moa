@@ -82,6 +82,9 @@ jobs:
       - name: Detect MCP implementation changes
         id: mcp_changes
         shell: bash
+        env:
+          # github.event.before is not exposed as a default Actions env var.
+          MOA_EVENT_BEFORE: ${{ github.event.before }}
         run: |
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -89,13 +92,17 @@ jobs:
           fi
 
           if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
-            base="$GITHUB_EVENT_BEFORE"
-            if [[ "$base" == "0000000000000000000000000000000000000000" ]]; then
+            base="$MOA_EVENT_BEFORE"
+            if [[ -z "$base" || "$base" == "0000000000000000000000000000000000000000" ]]; then
               base="${GITHUB_SHA}^"
             fi
             changed_files="$(git diff --name-only "$base" "$GITHUB_SHA")"
-          else
+          elif [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            git fetch --no-tags origin "$GITHUB_BASE_REF"
             changed_files="$(git diff --name-only "origin/$GITHUB_BASE_REF...$GITHUB_SHA")"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
           if grep -Eq '^mcp-server/.*\.mjs$' <<< "$changed_files"; then
