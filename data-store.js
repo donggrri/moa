@@ -101,7 +101,10 @@
         }),
         tasks: [],
         recurring: [],
-        ideas: []
+        ideas: [],
+        notes: [],
+        noteLinks: [],
+        noteTagCounts: []
       };
     }
 
@@ -163,6 +166,21 @@
       };
     }
 
+    function mapNote(note) {
+      return {
+        id: note.id,
+        spaceId: note.space_id,
+        title: note.title,
+        body: note.body_md || '',
+        authorId: note.author_id,
+        createdAt: note.created_at,
+        updatedAt: note.updated_at,
+        publishedAt: note.published_at || null,
+        publishToken: note.publish_token || null,
+        tags: Array.isArray(note.tags) ? note.tags : []
+      };
+    }
+
     async function listSpaces() {
       var membershipsResult = await client
         .from('memberships')
@@ -219,6 +237,33 @@
       space.tasks = tasks.map(function (task) { return mapTask(task, ruleMap); });
       space.recurring = mappedRules;
       space.ideas = ideas.map(mapIdea);
+      space.notes = [];
+      space.noteLinks = [];
+      space.noteTagCounts = [];
+      try {
+        var noteResults = await Promise.all([
+          client.rpc('list_notes', { p_space_id: spaceId }),
+          client.rpc('list_note_links', { p_space_id: spaceId }),
+          client.rpc('list_note_tags', { p_space_id: spaceId })
+        ]);
+        space.notes = (unwrap(noteResults[0], '노트를 불러오지 못했습니다.') || []).map(mapNote);
+        space.noteLinks = (unwrap(noteResults[1], '노트 연결을 불러오지 못했습니다.') || []).map(function (link) {
+          return {
+            id: link.id,
+            fromNoteId: link.from_note_id,
+            toNoteId: link.to_note_id,
+            rawTitle: link.raw_title
+          };
+        });
+        space.noteTagCounts = (unwrap(noteResults[2], '노트 태그를 불러오지 못했습니다.') || []).map(function (row) {
+          return { tag: row.tag, count: Number(row.note_count || 0) };
+        });
+      } catch (error) {
+        var text = error && error.message ? String(error.message) : '';
+        if (!/could not find the function|schema cache|does not exist|pgrst202/i.test(text)) {
+          throw error;
+        }
+      }
       currentSpaceId = spaceId;
       return space;
     }
@@ -390,6 +435,112 @@
       return refreshSelected();
     }
 
+    async function upsertNote(data) {
+      var spaceId = requireSpaceId();
+      var saved = firstRow(await callRpc('upsert_note', {
+        p_space_id: spaceId,
+        p_title: data.title,
+        p_body_md: data.body || '',
+        p_note_id: data.id || null
+      }, '노트를 저장하지 못했습니다.'));
+      return { space: await refreshSelected(), note: saved };
+    }
+
+    async function createNote(data) {
+      var result = await upsertNote({
+        title: data.title || '새 노트',
+        body: data.body || ''
+      });
+      if (result.note && result.note.id) result.space.createdNoteId = result.note.id;
+      return result.space;
+    }
+
+    async function updateNote(noteId, data) {
+      var result = await upsertNote({
+        id: noteId,
+        title: data.title,
+        body: data.body || ''
+      });
+      return result.space;
+    }
+
+    async function deleteNote(noteId) {
+      await callRpc('delete_note', { p_note_id: noteId }, '노트를 삭제하지 못했습니다.');
+      return refreshSelected();
+    }
+
+    async function setNotePublished(noteId, publish) {
+      await callRpc('set_note_published', {
+        p_note_id: noteId,
+        p_publish: publish === true
+      }, '노트 공개 상태를 바꾸지 못했습니다.');
+      return refreshSelected();
+    }
+
+    async function rotateNotePublishToken(noteId) {
+      await callRpc('rotate_note_publish_token', {
+        p_note_id: noteId
+      }, '공개 링크를 다시 만들지 못했습니다.');
+      return refreshSelected();
+    }
+
+    async function createNoteAsset(noteId, file) {
+      var created = firstRow(await callRpc('create_note_asset', {
+        p_note_id: noteId,
+        p_mime: file.type,
+        p_byte_size: file.size,
+        p_width: file.width || null,
+        p_height: file.height || null
+      }, '이미지를 준비하지 못했습니다.'));
+      if (!created || !created.storage_path) {
+        throw new StoreError('이미지를 준비하지 못했습니다.', 'ASSET_CREATE_FAILED');
+      }
+      var upload = await client.storage.from('note-images').upload(created.storage_path, file, {
+        contentType: file.type,
+        upsert: false
+      });
+      if (upload.error) {
+        try {
+          await callRpc('delete_note_asset', { p_asset_id: created.id }, '이미지 기록을 되돌리지 못했습니다.');
+        } catch (cleanupError) {
+          /* keep original upload error */
+        }
+        throw normalizeError(upload.error, '이미지를 올리지 못했습니다.');
+      }
+      return created;
+    }
+
+    async function signedAssetUrls(assets) {
+      var map = {};
+      var list = Array.isArray(assets) ? assets : [];
+      if (!list.length) return map;
+      await Promise.all(list.map(async function (asset) {
+        var path = asset.storage_path || asset.storagePath;
+        var id = String(asset.id || '').toLowerCase();
+        if (!path || !id) return;
+        var result = await client.storage.from('note-images').createSignedUrl(path, 3600);
+        if (!result.error && result.data && result.data.signedUrl) {
+          map[id] = result.data.signedUrl;
+        }
+      }));
+      return map;
+    }
+
+    async function listNoteAssets(noteId) {
+      var spaceId = requireSpaceId();
+      var result = await client
+        .from('note_assets')
+        .select('id,storage_path,mime,byte_size')
+        .eq('note_id', noteId)
+        .eq('space_id', spaceId);
+      return unwrap(result, '노트 이미지를 불러오지 못했습니다.') || [];
+    }
+
+    async function getPublishedNote(token) {
+      var result = await client.rpc('get_published_note', { p_token: String(token || '').trim() });
+      return unwrap(result, '공개된 노트를 찾지 못했습니다.');
+    }
+
     async function toggleRecurring(ruleId, active) {
       var spaceId = requireSpaceId();
       var result = await client.from('recurrence_rules')
@@ -416,7 +567,10 @@
         { table: 'memberships', filter: 'space_id=eq.' + spaceId },
         { table: 'recurrence_rules', filter: 'space_id=eq.' + spaceId },
         { table: 'tasks', filter: 'space_id=eq.' + spaceId },
-        { table: 'ideas', filter: 'space_id=eq.' + spaceId }
+        { table: 'ideas', filter: 'space_id=eq.' + spaceId },
+        { table: 'notes', filter: 'space_id=eq.' + spaceId },
+        { table: 'note_tags', filter: 'space_id=eq.' + spaceId },
+        { table: 'note_links', filter: 'space_id=eq.' + spaceId }
       ].forEach(function (subscription) {
         channel.on('postgres_changes', {
           event: '*',
@@ -465,6 +619,15 @@
       updateIdea: updateIdea,
       archiveIdea: archiveIdea,
       convertIdeaToTask: convertIdeaToTask,
+      createNote: createNote,
+      updateNote: updateNote,
+      deleteNote: deleteNote,
+      setNotePublished: setNotePublished,
+      rotateNotePublishToken: rotateNotePublishToken,
+      createNoteAsset: createNoteAsset,
+      signedAssetUrls: signedAssetUrls,
+      listNoteAssets: listNoteAssets,
+      getPublishedNote: getPublishedNote,
       toggleRecurring: toggleRecurring,
       subscribe: subscribe,
       destroy: destroy,
